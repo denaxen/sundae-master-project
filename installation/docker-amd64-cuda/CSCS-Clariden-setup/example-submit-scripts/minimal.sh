@@ -2,9 +2,9 @@
 
 # Variables used by the entrypoint script
 # Change this to the path of your project (can be the /dev or /run copy)
-export PROJECT_ROOT_AT=$HOME/projects/template-project-name/dev
-export PROJECT_NAME=template-project-name
-export PACKAGE_NAME=template_package_name
+export PROJECT_ROOT_AT=$HOME/projects/diffusion-llms-project/dev
+export PROJECT_NAME=diffusion-llms-project
+export PACKAGE_NAME=diffusion_llms_project
 export SLURM_ONE_ENTRYPOINT_SCRIPT_PER_NODE=1
 
 # Enroot + Pyxis
@@ -15,7 +15,7 @@ export SLURM_ONE_ENTRYPOINT_SCRIPT_PER_NODE=1
 srun \
   -J template-minimal \
   --pty \
-  --container-image=$CONTAINER_IMAGES/$(id -gn)+$(id -un)+template-project-name+amd64-cuda-root-latest.sqsh \
+  --container-image=$CONTAINER_IMAGES/$(id -gn)+$(id -un)+diffusion-llms-project+amd64-cuda-root-latest.sqsh \
   --environment="${PROJECT_ROOT_AT}/installation/docker-amd64-cuda/CSCS-Clariden-setup/submit-scripts/edf.toml" \
   --container-mounts=$PROJECT_ROOT_AT,$SCRATCH \
   --container-workdir=$PROJECT_ROOT_AT \

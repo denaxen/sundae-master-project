@@ -1,1 +1,1 @@
-python -m template_package_name.template_experiment
+python -m diffusion_llms_project.template_experiment

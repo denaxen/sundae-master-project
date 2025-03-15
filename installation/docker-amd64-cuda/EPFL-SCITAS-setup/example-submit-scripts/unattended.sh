@@ -12,13 +12,13 @@
 
 # Variables used by the entrypoint script
 # Change this to the path of your project (can be the /dev or /run copy)
-export PROJECT_ROOT_AT=$HOME/projects/template-project-name/run
-export PROJECT_NAME=template-project-name
-export PACKAGE_NAME=template_package_name
+export PROJECT_ROOT_AT=$HOME/projects/diffusion-llms-project/run
+export PROJECT_NAME=diffusion-llms-project
+export PACKAGE_NAME=diffusion_llms_project
 export SLURM_ONE_ENTRYPOINT_SCRIPT_PER_NODE=1
 
 srun \
-  --container-image=$CONTAINER_IMAGES/claire+moalla+template-project-name+amd64-cuda-root-latest.sqsh \
+  --container-image=$CONTAINER_IMAGES/claire+moalla+diffusion-llms-project+amd64-cuda-root-latest.sqsh \
   --container-mounts=/etc/slurm,$PROJECT_ROOT_AT,$SCRATCH \
   --container-workdir=$PROJECT_ROOT_AT \
   --no-container-mount-home \
@@ -27,7 +27,7 @@ srun \
   --container-writable \
   -G 1 \
   /opt/template-entrypoints/pre-entrypoint.sh \
-  python -m template_package_name.template_experiment some_arg=some_value wandb.mode=offline
+  python -m diffusion_llms_project.template_experiment some_arg=some_value wandb.mode=offline
 
 # additional options for pyxis
 # --container-env to override environment variables defined in the container

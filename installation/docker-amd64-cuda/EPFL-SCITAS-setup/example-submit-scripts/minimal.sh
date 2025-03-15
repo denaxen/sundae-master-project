@@ -5,9 +5,9 @@
 
 # Variables used by the entrypoint script
 # Change this to the path of your project (can be the /dev or /run copy)
-export PROJECT_ROOT_AT=$HOME/projects/template-project-name/dev
-export PROJECT_NAME=template-project-name
-export PACKAGE_NAME=template_package_name
+export PROJECT_ROOT_AT=$HOME/projects/diffusion-llms-project/dev
+export PROJECT_NAME=diffusion-llms-project
+export PACKAGE_NAME=diffusion_llms_project
 export SLURM_ONE_ENTRYPOINT_SCRIPT_PER_NODE=1
 
 # Enroot + Pyxis
@@ -19,7 +19,7 @@ srun \
   -J template-minimal \
   -G 1 --partition h100 \
   --pty \
-  --container-image=$CONTAINER_IMAGES/claire+moalla+template-project-name+amd64-cuda-root-latest.sqsh \
+  --container-image=$CONTAINER_IMAGES/claire+moalla+diffusion-llms-project+amd64-cuda-root-latest.sqsh \
   --container-mounts=/etc/slurm,$PROJECT_ROOT_AT,$SCRATCH \
   --container-workdir=$PROJECT_ROOT_AT \
   --no-container-mount-home \
@@ -46,5 +46,5 @@ srun \
   --no-home \
   --nv \
   --writable-tmpfs \
-  $CONTAINER_IMAGES/template-project-name_amd64-cuda-root-latest.sif \
+  $CONTAINER_IMAGES/diffusion-llms-project_amd64-cuda-root-latest.sif \
   bash

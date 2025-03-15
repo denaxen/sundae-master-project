@@ -17,14 +17,14 @@
 
 # Variables used by the entrypoint script
 # Change this to the path of your project (can be the /dev or /run copy)
-export PROJECT_ROOT_AT=$HOME/projects/template-project-name/run
-export PROJECT_NAME=template-project-name
-export PACKAGE_NAME=template_package_name
+export PROJECT_ROOT_AT=$HOME/projects/diffusion-llms-project/run
+export PROJECT_NAME=diffusion-llms-project
+export PACKAGE_NAME=diffusion_llms_project
 export SLURM_ONE_ENTRYPOINT_SCRIPT_PER_NODE=1
 export WANDB_API_KEY_FILE_AT=$HOME/.wandb-api-key
 
 srun \
-  --container-image=$CONTAINER_IMAGES/claire+moalla+template-project-name+amd64-cuda-root-latest.sqsh \
+  --container-image=$CONTAINER_IMAGES/claire+moalla+diffusion-llms-project+amd64-cuda-root-latest.sqsh \
   --container-mounts=\
 /etc/slurm,\
 $PROJECT_ROOT_AT,\
@@ -36,7 +36,7 @@ $WANDB_API_KEY_FILE_AT \
   --no-container-entrypoint \
   --container-writable \
   /opt/template-entrypoints/pre-entrypoint.sh \
-  bash -c 'sleep 60; python -m template_package_name.template_experiment some_arg=LOCALID-$SLURM_LOCALID-PROCID-$SLURM_PROCID'
+  bash -c 'sleep 60; python -m diffusion_llms_project.template_experiment some_arg=LOCALID-$SLURM_LOCALID-PROCID-$SLURM_PROCID'
 
 # Sleep to wait for the installation of the project.
 

@@ -71,7 +71,7 @@ cd $CONTAINER_IMAGES
 # Replace with your image name
 
 srun --ntasks=1 --cpus-per-task=32 --partition h100 --time=0:30:00 \
-enroot import docker://registry.rcp.epfl.ch#claire/moalla/template-project-name:amd64-cuda-root-latest
+enroot import docker://registry.rcp.epfl.ch#claire/moalla/diffusion-llms-project:amd64-cuda-root-latest
 # This will create a squashfs file that you'll use to start your jobs.
 ```
 
@@ -81,7 +81,7 @@ Optionally if you want to use Apptainer
 # Don't do this on a login node.
 # In a tmux shell ideally.
 srun --ntasks=1 --cpus-per-task=32 --partition h100 --time=1:00:00 \
-apptainer pull docker://registry.rcp.epfl.ch/claire/moalla/template-project-name:amd64-cuda-root-latest
+apptainer pull docker://registry.rcp.epfl.ch/claire/moalla/diffusion-llms-project:amd64-cuda-root-latest
 ```
 
 ### Clone your repository in your home directory
@@ -98,8 +98,8 @@ This guide includes the steps to do it, and there are general details in `data/R
 ```bash
 # SSH to a cluster.
 ssh kuma
-mkdir -p $HOME/projects/template-project-name
-cd $HOME/projects/template-project-name
+mkdir -p $HOME/projects/diffusion-llms-project
+cd $HOME/projects/diffusion-llms-project
 git clone <git SSH URL> dev
 git clone <git SSH URL> run
 ```
@@ -338,7 +338,7 @@ All the directories will be created automatically.
    (something like `/users/smoalla/jetbrains-server/dist`)
    not in its default location **(use the small "installation options..." link)**.
    For the project directory, it should be in the same location where it was mounted (`${PROJECT_ROOT_AT}`,
-   something like `/users/smoalla/projects/template-project-name/dev`).
+   something like `/users/smoalla/projects/diffusion-llms-project/dev`).
 
 When in the container, locate the name of the PyCharm IDE installed.
 It will be at

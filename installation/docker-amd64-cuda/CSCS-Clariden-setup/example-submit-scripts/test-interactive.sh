@@ -5,7 +5,7 @@
 srun \
   -J template-test \
   --pty \
-  --container-image=$CONTAINER_IMAGES/claire+smoalla+template-project-name+amd64-cuda-root-latest.sqsh \
+  --container-image=$CONTAINER_IMAGES/claire+smoalla+diffusion-llms-project+amd64-cuda-root-latest.sqsh \
   --no-container-mount-home \
   --no-container-remap-root \
   --no-container-entrypoint \

@@ -14,7 +14,7 @@ from pathlib import Path
 import wandb
 from omegaconf import DictConfig, OmegaConf, omegaconf
 
-from template_package_name import utils
+from diffusion_llms_project import utils
 
 # Hydra sets up the logger automatically.
 # https://hydra.cc/docs/tutorials/basic/running_your_app/logging/

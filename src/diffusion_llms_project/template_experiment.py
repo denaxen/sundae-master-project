@@ -10,7 +10,7 @@ import hydra
 import wandb
 from omegaconf import DictConfig
 
-from template_package_name import utils
+from diffusion_llms_project import utils
 
 # Refers to utils for a description of resolvers
 utils.config.register_resolvers()

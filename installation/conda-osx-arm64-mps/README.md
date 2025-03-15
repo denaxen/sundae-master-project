@@ -63,8 +63,8 @@ Clone the git repository.
 
 ```bash
 # Keep a /dev copy for development and a /run copy for running unattended experiments.
-mkdir template-project-name
-cd template-project-name
+mkdir diffusion-llms-project
+cd diffusion-llms-project
 git clone <git SSH URL> dev
 cd dev
 ```
@@ -101,7 +101,7 @@ Install the project with
 
 ```bash
 # Activate the environment
-mamba activate template-project-name
+mamba activate diffusion-llms-project
 # When in the PROJECT_ROOT directory.
 pip install -e .
 ```
@@ -109,7 +109,7 @@ pip install -e .
 ## Running code in the environment
 
 ```bash
-mamba activate template-project-name
+mamba activate diffusion-llms-project
 ```
 
 Run scripts from the `PROJECT_ROOT` directory.
@@ -118,7 +118,7 @@ Here are some examples.
 ```bash
 # When in the PROJECT_ROOT directory.
 # template_experiment is an actual script that you can run.
-python -m template_package_name.template_experiment some_arg=some_value
+python -m diffusion_llms_project.template_experiment some_arg=some_value
 zsh reproducibility-scripts/template-experiment.sh
 ```
 
@@ -175,9 +175,9 @@ After manually editing the `environment.yml` file, you need to recreate the envi
 ```bash
 # When in the PROJECT_ROOT directory.
 mamba deactivate
-mamba env remove --name template-project-name
+mamba env remove --name diffusion-llms-project
 mamba env create --file installation/conda-osx-arm64-mps/environment.yml
-mamba activate template-project-name
+mamba activate diffusion-llms-project
 ```
 
 ### Interactively (while developing)

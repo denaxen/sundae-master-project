@@ -37,7 +37,7 @@ hydra:
   verbose: false  # Set to true for logging at debug level.
 
 wandb:
-  project: template-project-name
+  project: diffusion-llms-project
   mode: online
   anonymous: allow
   tags:
