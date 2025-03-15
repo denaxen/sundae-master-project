@@ -1,0 +1,51 @@
+# Base configuration file
+defaults:
+  - _self_
+  - trainer: default.yaml
+  - loader: default.yaml
+  
+seed: 42
+mode: train
+compile: false
+config_optimizer_and_batch_automatically: false
+save_model: false
+save_model_path: "model.pt"
+
+# Main model configuration
+data:
+  name: 'text8'
+  root: 'data/text8'
+  sequence_length: 32
+  vocabulary_size: 27
+
+model:
+  embedding_dim: 512
+  nb_layers: 12
+  nb_heads: 8
+  use_scalenorm: true
+  use_glu: true
+  use_rotary: true
+
+unroll_steps: 3
+learning_rate: 1e-5
+
+sample:
+  temperature: 0.8
+  sample_proportion: 0.3
+  sample_frequency: 1
+  steps: 1000
+  min_steps: 10
+  nb_samples: 4
+
+checkpointing:
+  resume_from_ckpt: false
+  resume_ckpt_path: null
+
+wandb:
+  project: sundae-diffusion-improvement
+  notes: ""
+  entity: "claire-labo"
+  group: null
+  job_type: null
+  name: sundae-basic
+  tags:

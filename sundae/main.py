@@ -1,187 +1,131 @@
-import argparse
-
-import torch
-import torch.nn.functional as F
-from torch.distributions.categorical import Categorical
-
-import toml
-from tqdm import tqdm
-from types import SimpleNamespace
+import os
 from pathlib import Path
 
-from ptpt.trainer import Trainer, TrainerConfig
-from ptpt.log import debug, info, warning, error, critical
-from ptpt.callbacks import CallbackType
-from ptpt.utils import set_seed, get_parameter_count, get_device
+import hydra
+import lightning as L
+import torch
+from lightning.pytorch.loggers import TensorBoardLogger
+from loguru import logger
+from omegaconf import OmegaConf
 
-from data import get_text8
+from dataloaders import get_dataloaders
+from loading_utils import get_module
+from utils.other_utils import (
+    add_resolvers,
+    # configure_optimizer,
+    fsspec_exists,
+    prepare_logger,
+)
 
-from x_transformers import TransformerWrapper, Encoder
 
-def main(args):
-    cfg = SimpleNamespace(**toml.load(args.cfg_path))
-    seed = set_seed(args.seed)
+def train(config):
+    logger.info("Starting training")
 
-    info(f"random seed: {seed}")
-    train_dataset, eval_dataset = get_text8(cfg.data['root'], seq_len=cfg.data['sequence_length'])
-    net = TransformerWrapper(
-        num_tokens = cfg.data['vocabulary_size'],
-        max_seq_len = cfg.data['sequence_length'],
-        attn_layers = Encoder(
-            dim = cfg.model['embedding_dim'],
-            depth = cfg.model['nb_layers'],
-            head = cfg.model['nb_heads'],
-            use_scalenorm = cfg.model['use_scalenorm'],
-            ff_glu = cfg.model['use_glu'],
-            rotary_pos_emb=cfg.model['use_rotary'],
+    if config.get("wandb", None):
+        # Wandb args need to be in a dict, not omegaconf object
+        wandb_args_dict = OmegaConf.to_object(config.wandb)
+
+        wandb_logger = L.pytorch.loggers.WandbLogger(
+            config=OmegaConf.to_object(config),
+            **wandb_args_dict,
         )
-    )
-    info(f"number of parameters: {get_parameter_count(net):,}")
-    
-    def get_random_text(shape):
-        return torch.randint(cfg.data['vocabulary_size'], shape)
+    else:
+        wandb_logger = None
+    # Always log in tensorboard
+    tb_logger = TensorBoardLogger("tb_logs", name="logs")
+    loggers = tb_logger if wandb_logger is None else (wandb_logger, tb_logger)
 
-    def corrupt_text(batched_text):
-        corruption_prob_per_sequence = torch.rand((batched_text.shape[0], 1))
-        rand = torch.rand(batched_text.shape)
-        mask = (rand < corruption_prob_per_sequence).to(batched_text.device)
+    if (
+        config.checkpointing.resume_from_ckpt
+        and config.checkpointing.resume_ckpt_path is not None
+        and fsspec_exists(config.checkpointing.resume_ckpt_path)
+    ):
+        ckpt_path = config.checkpointing.resume_ckpt_path
+        logger.info(f"Training starting from checkpoint at {ckpt_path}")
+    else:
+        ckpt_path = None
+        logger.info("Training starting from scratch (no checkpoint to reload)")
 
-        random_text = get_random_text(batched_text.shape).to(batched_text.device)
-        return mask * random_text + ~mask * batched_text
+    # Prepare data
+    train_loader, eval_loader = get_dataloaders(config)
+    lightning_module = get_module(config)
 
-    def logits_fn(net, batched_text):
-        samples = corrupt_text(batched_text)
-        all_logits = []
-        for _ in range(cfg.unroll_steps):
-            logits = net(samples)
-            samples = Categorical(logits=logits).sample().detach()
-            all_logits.append(logits)
-        final_logits = torch.cat(all_logits, axis=0)
-        return final_logits
+    if config.compile:  # speedup model
+        lightning_module.model = torch.compile(lightning_module.model)
 
-    def loss_fn(net, batched_text):
-        logits = logits_fn(net, batched_text)
-        targets = batched_text.repeat(cfg.unroll_steps, 1)
-        accuracy = (logits.argmax(dim=-1) == targets).sum() / targets.numel()
-        loss = F.cross_entropy(logits.permute(0, 2, 1), targets)
-        return loss, accuracy*100.
-    
-    @torch.inference_mode()
-    def sample_fn(net):
-        device = get_device(not args.no_cuda)
-
-        batched_text = get_random_text((args.nb_samples, cfg.data['sequence_length'])).to(device)
-        sample_mask = torch.zeros(args.nb_samples).bool().to(device)
-        for n in range(cfg.sample['steps']):
-            old_sample_mask = sample_mask.clone()
-            logits = net(batched_text[~sample_mask])
-            sample = Categorical(logits=logits / cfg.sample['temperature']).sample()
-            
-            mask = (torch.rand(sample.shape) > cfg.sample['sample_proportion']).to(batched_text.device)
-            # mask = torch.logical_or(mask, sample_mask.view(-1, 1).repeat(1, sample.shape[1]))
-            sample[mask] = batched_text[~sample_mask][mask]
- 
-            if n >= cfg.sample['min_steps']:
-                sample_mask[~sample_mask] = torch.all((sample == batched_text[~sample_mask]).view(sample.shape[0], -1), dim=-1)
-
-            if torch.all(sample_mask).item():
-                break
-            batched_text[~old_sample_mask] = sample
-        debug(f"stopped sampling after {n+1} steps.")
-        return batched_text
-
-    # @torch.inference_mode()
-    # @torch.cuda.amp.autocast()
-    # def argmax_unrolled_sample_fn(net):
-        # device = get_device(not args.no_cuda)
-
-        # batched_text = get_random_text((args.nb_samples, cfg.data['sequence_length'])).to(device)
-        # sample_mask = torch.zeros(args.nb_samples).bool().to(device)
-        # prev_logits = None
-        # for n in tqdm(range(cfg.sample['steps'])):
-            # old_sample_mask = sample_mask.clone()
-
-            # if prev_logits == None:
-                # old_sample_mask = sample_mask.clone()
-                # logits = net(batched_text[~sample_mask])
-                # sample = Categorical(logits=logits / cfg.sample['temperature']).sample()
-            # else:
-                # prev_probs = F.softmax(prev_logits, dim=-1)
-                # max_prev_probs, _ = prev_probs.max(dim=-1)
-                # cutoffs = torch.quantile(max_prev_probs, 0.3, dim=-1)
-                # argmax_mask = max_prev_probs <= cutoffs[..., None]
-
-                # logits = net(batched_text[~sample_mask])
-                # sample = logits.argmax(dim=-1)
-                # mask = (torch.rand(sample.shape) > cfg.sample['sample_proportion']).to(batched_text.device)
-                # sample[mask] = batched_text[~sample_mask][mask]
-
-                # logits = net(sample)
-                # # TODO: do we want to use sample proportion masking when using this decoding method?
-                # sample[argmax_mask] = logits[argmax_mask].argmax(dim=-1)
-                # sample[mask] = batched_text[~sample_mask][mask]
-
-            # if n >= cfg.sample['min_steps']:
-                # sub_sample_mask = torch.all((sample == batched_text[~sample_mask]).view(sample.shape[0], -1), dim=-1)
-                # sample_mask[~sample_mask] = sub_sample_mask
-            # else:
-                # sub_sample_mask = torch.zeros(sample.shape[0]).bool().to(sample.device)
-
-            # if torch.all(sample_mask).item():
-                # break
-
-            # prev_logits = logits[~sub_sample_mask]
-            # batched_text[~old_sample_mask] = sample
-        # return batched_text
-
-    trainer_cfg = TrainerConfig(
-        **cfg.trainer,
-        nb_workers = args.nb_workers,
-        use_cuda = not args.no_cuda,
-        use_amp = not args.no_amp,
-        save_outputs = not args.no_save,
+    # Create lightning trainer from fields in the config
+    trainer = hydra.utils.instantiate(
+        config.trainer, default_root_dir=os.getcwd(), strategy="ddp", logger=loggers
     )
 
-    trainer = Trainer(
-        net = net,
-        loss_fn = loss_fn,
-        train_dataset = train_dataset,
-        test_dataset = eval_dataset,
-        cfg = trainer_cfg,
+    trainer.fit(
+        lightning_module,
+        train_loader,
+        eval_loader,
+        ckpt_path=ckpt_path,
     )
-    if args.resume:
-        trainer.load_checkpoint(args.resume)
-    
-    @torch.inference_mode()
-    def callback_sample(trainer):
-        trainer.net.eval()
-        info("sampling from current model")
-        samples = sample_fn(trainer.net)
-        # samples = argmax_unrolled_sample_fn(trainer.net)
 
-        for i, sample in enumerate(samples):
-            info(f"- " + ''.join(train_dataset.id_token[i.item()] for i in sample))
-        trainer.net.train()
+    # Save the model if configured to do so
+    if isinstance(config.save_model, str):
+        if config.save_model.lower() == "false":
+            config.save_model = False
+        elif config.save_model.lower() == "true":
+            config.save_model = True
+        else:
+            config.save_model = False
+    if config.save_model:
+        save_path = Path(config.save_model_path)
 
-    if args.sample:
-        callback_sample(trainer)
-        exit()
+        # Ensure the parent directory exists
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Saving model to {save_path}")
 
-    trainer.register_callback(CallbackType.EvalEpoch, callback_sample, cfg.sample['sample_frequency'])
-    trainer.train()
+        # Save the model's state_dict
+        torch.save(lightning_module.model.state_dict(), save_path)
+        logger.info("Model saved successfully.")
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg-path', type=str, default='config/text8.toml')
-    parser.add_argument('--resume', type=str, default=None)
-    parser.add_argument('--seed', type=int, default=None)
-    parser.add_argument('--no-save', action='store_true')
-    parser.add_argument('--no-cuda', action='store_true')
-    parser.add_argument('--no-amp', action='store_true')
-    parser.add_argument('--nb-workers', type=int, default=4)
-    parser.add_argument('--sample', action='store_true')
-    parser.add_argument('--nb-samples', type=int, default=4)
-    parser.add_argument('--min-steps', type=int, default=10)
-    args = parser.parse_args()
+    validation_results = trainer.validate(
+        lightning_module,
+        dataloaders=eval_loader,
+        verbose=True,  # Optional: Set to True to print validation results
+    )
 
-    main(args)
+    # Optionally, log or process the validation results
+    logger.info(f"Final validation results: {validation_results}")
+
+
+def eval(config):
+    # Run the evaluation
+    raise NotImplementedError
+
+
+@hydra.main(version_base=None, config_path="configs", config_name="config")
+def main(config):
+    if hasattr(config, "seed"):
+        L.seed_everything(config.seed)
+    else:
+        L.seed_everything(0)
+    # if config.config_optimizer_and_batch_automatically:
+    #     configure_optimizer(config)
+    if config.loader.global_batch_size < config.loader.batch_size:
+        config.loader.batch_size = config.loader.global_batch_size
+
+    # OmegaConf.save(config=config, f=Path(os.getcwd()) / "config.yaml")
+
+    logger.info(f"Arguments:\n{OmegaConf.to_yaml(config, resolve=True)}")
+    mode = config.mode
+
+    if mode == "train":
+        logger.add(Path(os.getcwd()) / "logs_train.txt")
+        train(config)
+    elif mode == "eval":
+        logger.add(Path(os.getcwd()) / "logs_eval.txt")
+        eval(config)
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+
+
+if __name__ == "__main__":
+    add_resolvers()
+    prepare_logger()
+    main() 

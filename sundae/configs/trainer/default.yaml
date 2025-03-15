@@ -1,0 +1,10 @@
+_target_: lightning.pytorch.Trainer
+max_epochs: 100
+log_every_n_steps: 1
+val_check_interval: 1.0
+precision: 32
+enable_checkpointing: true
+callbacks:
+  - _target_: callbacks.TextSamplingCallback
+    sample_frequency: 500
+    nb_samples: ${sample.nb_samples} 

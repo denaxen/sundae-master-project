@@ -141,9 +141,13 @@ data/*
 !data/README.md
 
 outputs/*
+outputs
 !outputs/README.md
 
 wandb
 **/*.out
 
 third-party
+text8
+logs_train.txt
+tb_logs
