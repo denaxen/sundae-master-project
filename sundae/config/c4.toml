@@ -1,0 +1,33 @@
+unroll_steps = 3
+
+[trainer]
+    exp_name = 'c4-sundae'
+    batch_size = 64  # Reduced batch size as C4 samples may be more complex
+    nb_batches = [100, 10]
+    learning_rate = 1e-5
+    checkpoint_frequency = 1000
+    metric_names = ['accuracy']
+
+[data]
+    name = 'c4'
+    root = 'data/c4'  # Path to the C4 dataset directory or files
+    sequence_length = 128  # Increased sequence length for better context
+    vocabulary_size = 69   # For character-level tokenization with special chars and numbers
+    # Optional: Uncomment and set these values as needed
+    # max_examples = 100000  # Limit number of examples (useful for testing)
+    # tokenizer_path = null  # Path to custom tokenizer vocabulary (if needed)
+
+[model]
+    embedding_dim = 768   # Increased embedding dimension for more complex data
+    nb_layers = 12
+    nb_heads = 12        # Increased number of attention heads
+    use_scalenorm = true
+    use_glu = true
+    use_rotary = true
+
+[sample]
+    temperature = 0.8
+    sample_proportion = 0.3
+    sample_frequency = 1
+    steps = 1000
+    min_steps = 10 

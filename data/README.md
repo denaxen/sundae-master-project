@@ -51,6 +51,117 @@ It's better to mount the whole "scratch" filesystem and let the symlinks handle 
 
 ## Description of the data
 
+### text8 Dataset
+The text8 dataset is a preprocessed version of the English Wikipedia text, consisting of the first 100 million characters. It has been cleaned to contain only lowercase letters a-z and spaces.
+
+### C4 Dataset (Colossal Clean Common Crawl)
+The C4 dataset, or "Colossal Clean Common Crawl", is a large dataset created by cleaning Common Crawl web data. It consists of hundreds of gigabytes of English text scraped from the web, filtered to remove incomplete sentences, boilerplate text like menus and navigation, offensive content, and non-English text.
+
 ## Instructions to obtain the data
 
+### text8 Dataset
+The text8 dataset can be downloaded from:
+```bash
+wget http://mattmahoney.net/dc/text8.zip
+unzip text8.zip -d data/
+```
+
+### C4 Dataset
+The full C4 dataset is very large (several hundred GB). There are a few ways to access it:
+
+#### Option 1: Using Hugging Face Datasets
+You can use the Hugging Face Datasets library to stream the dataset:
+
+```bash
+pip install datasets
+```
+
+Then create a script to download and prepare the data:
+
+```python
+from datasets import load_dataset
+import json
+import os
+
+# Create output directory
+os.makedirs('data/c4', exist_ok=True)
+
+# Load a small subset for validation (adjust split and streaming as needed)
+dataset = load_dataset('c4', 'en', split='validation', streaming=True)
+
+# Write a sample of validation data to a jsonl file
+with open('data/c4/validation.jsonl', 'w') as f:
+    for i, example in enumerate(dataset):
+        if i >= 10000:  # Adjust sample size as needed
+            break
+        f.write(json.dumps(example) + '\n')
+
+# Load a subset of training data
+dataset = load_dataset('c4', 'en', split='train', streaming=True)
+
+# Write a sample of training data to a jsonl file
+with open('data/c4/train.jsonl', 'w') as f:
+    for i, example in enumerate(dataset):
+        if i >= 100000:  # Adjust sample size as needed
+            break
+        f.write(json.dumps(example) + '\n')
+```
+
+#### Option 2: TensorFlow Datasets
+Alternatively, you can use TensorFlow Datasets:
+
+```bash
+pip install tensorflow tensorflow-datasets
+```
+
+```python
+import tensorflow_datasets as tfds
+import json
+import os
+
+os.makedirs('data/c4', exist_ok=True)
+
+# Load validation data
+dataset = tfds.load('c4/en:3.0.1', split='validation')
+
+# Write validation data to jsonl
+with open('data/c4/validation.jsonl', 'w') as f:
+    for i, example in enumerate(dataset):
+        if i >= 10000:  # Adjust as needed
+            break
+        item = {
+            'text': example['text'].numpy().decode('utf-8'),
+            'url': example['url'].numpy().decode('utf-8')
+        }
+        f.write(json.dumps(item) + '\n')
+
+# Load training data
+dataset = tfds.load('c4/en:3.0.1', split='train')
+
+# Write training data to jsonl
+with open('data/c4/train.jsonl', 'w') as f:
+    for i, example in enumerate(dataset):
+        if i >= 100000:  # Adjust as needed
+            break
+        item = {
+            'text': example['text'].numpy().decode('utf-8'),
+            'url': example['url'].numpy().decode('utf-8')
+        }
+        f.write(json.dumps(item) + '\n')
+```
+
+#### Option 3: Direct Download from TensorFlow
+For the full dataset, you can download it directly from the TensorFlow website:
+https://www.tensorflow.org/datasets/catalog/c4
+
 ## Instructions to process the data
+The C4 dataset is pre-processed and ready to use. Just make sure the data is in the expected format:
+- JSONL files with each line containing a JSON object
+- Each JSON object should have a 'text' field
+
+When running experiments with C4, use the `c4.toml` configuration file:
+```bash
+python main.py --cfg-path config/c4.toml
+```
+
+If you're using only a subset of C4 for testing, you can uncomment and set the `max_examples` parameter in the config file.
