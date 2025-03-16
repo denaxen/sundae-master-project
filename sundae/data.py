@@ -12,7 +12,7 @@ class Text8Dataset(torch.utils.data.Dataset):
             path: str,
             split: str = 'train',
             seq_len: int = 32,
-            split_size: Tuple[int, int, int] = (90e6, 5e6, 5e6)
+            split_size: Tuple[int, int, int] = (10e6, 2e6, 2e6)
         ):
         super().__init__()
         self.seq_len = seq_len
