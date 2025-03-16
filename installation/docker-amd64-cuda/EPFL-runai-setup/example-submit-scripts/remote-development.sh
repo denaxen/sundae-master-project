@@ -14,6 +14,7 @@ runai submit \
   -e PROJECT_ROOT_AT=/claire-rcp-scratch/home/likhobab/diffusion-llms-project/dev \
   -e PROJECT_NAME=diffusion-llms-project \
   -e PACKAGE_NAME=diffusion_llms_project \
+  -e GIT_CONFIG_AT=/claire-rcp-scratch/home/likhobab/remote-development/gitconfig \
   -e VSCODE_SERVER_AT=/claire-rcp-scratch/home/likhobab/remote-development/vscode-server \
   -e WANDB_API_KEY_FILE_AT=/claire-rcp-scratch/home/likhobab/.wandb_api_key \
   -e SSH_SERVER=1 \
