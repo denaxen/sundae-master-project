@@ -15,6 +15,7 @@ runai submit \
   -e PROJECT_NAME=diffusion-llms-project \
   -e PACKAGE_NAME=diffusion_llms_project \
   -e VSCODE_SERVER_AT=/claire-rcp-scratch/home/likhobab/remote-development/vscode-server \
+  -e WANDB_API_KEY_FILE_AT=/claire-rcp-scratch/home/likhobab/.wandb_api_key \
   -e SSH_SERVER=1 \
    --allow-privilege-escalation \
   -g 1 --cpu 8 --cpu-limit 8 --memory 64G --memory-limit 64G --large-shm \
