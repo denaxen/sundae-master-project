@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 import lightning as L
 from loguru import logger
-from x_transformers import TransformerWrapper, Encoder
+from x_transformers import TransformerWrapper, Decoder
 
 class AutoregressiveTransformerModule(L.LightningModule):
     def __init__(self, config):
@@ -15,7 +15,7 @@ class AutoregressiveTransformerModule(L.LightningModule):
         self.model = TransformerWrapper(
             num_tokens=config.data.vocabulary_size,
             max_seq_len=config.data.sequence_length,
-            attn_layers=Encoder(
+            attn_layers=Decoder(
                 dim=config.model.embedding_dim,
                 depth=config.model.nb_layers,
                 head=config.model.nb_heads,
@@ -40,7 +40,6 @@ class AutoregressiveTransformerModule(L.LightningModule):
         # Remove the last prediction (there is no target for the final token)
         logits = logits[:, :-1, :]
         targets = batch[:, 1:]
-        
         loss = F.cross_entropy(logits.transpose(1, 2), targets)
         accuracy = (logits.argmax(dim=-1) == targets).float().mean() * 100.0
         
