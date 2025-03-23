@@ -220,7 +220,7 @@ class SundaeMTModule(L.LightningModule):
     
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(),
-            lr=self.config.optimizer.learning_rate, 
+            lr=self.config.model.peak_lr, 
             betas=self.config.optimizer.betas,
             eps=self.config.optimizer.eps,
             weight_decay=self.config.optimizer.weight_decay)
@@ -240,18 +240,21 @@ class SundaeMTModule(L.LightningModule):
     
     def _get_lr_multiplier(self, step):
         """Custom learning rate schedule with warmup and cosine decay."""
-        warmup_steps = 5000
-        max_steps = 1000000  # 10^6 as in the paper
-        min_lr = 1e-7
-        peak_lr = 1e-4
-        final_lr = 1e-5
+        warmup_steps = self.config.model.warmup_steps
+        max_steps = self.config.model.trainer.max_steps
+        min_lr = self.config.model.min_lr
+        peak_lr = self.config.model.peak_lr
+        final_lr = self.config.optimizer.learning_rate
+
+        min_multiplier = min_lr / peak_lr # e.g., 1e-7/1e-4 = 0.001
+        peak_multiplier = 1.0
+        final_multiplier = final_lr / peak_lr # e.g., 1e-5/1e-4 = 0.1
         
-        # Initial warmup from min_lr to peak_lr
         if step < warmup_steps:
-            return min_lr + (peak_lr - min_lr) * (step / warmup_steps)
+            return min_multiplier + (peak_multiplier - min_multiplier) * (step / warmup_steps)
         
         # Cosine annealing from peak_lr to final_lr
         progress = (step - warmup_steps) / (max_steps - warmup_steps)
-        progress = min(max(progress, 0.0), 1.0)  # Clamp to [0, 1]
-        cosine_decay = 0.5 * (1 + torch.cos(torch.tensor(progress * torch.pi)))
-        return final_lr + (peak_lr - final_lr) * cosine_decay
+        progress = min(max(progress, 0.0), 1.0)  # Clamp progress to [0, 1]
+        cosine_decay = 0.5 * (1 + math.cos(math.pi * progress))
+        return final_multiplier + (peak_multiplier - final_multiplier) * cosine_decay

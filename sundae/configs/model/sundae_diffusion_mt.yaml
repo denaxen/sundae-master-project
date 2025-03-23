@@ -9,11 +9,17 @@ length_loss_weight: 1.0
 dropout: 0.1
 feedforward_dim: 2048
 
+min_lr: 1e-7
+peak_lr: 1e-4
+warmup_steps: 5000
+
+
 trainer:
   _target_: lightning.pytorch.Trainer
   max_epochs: 1
   log_every_n_steps: 1
   val_check_interval: 1.0
+  max_steps: 1000000
   precision: 32
   enable_checkpointing: true
   callbacks:
