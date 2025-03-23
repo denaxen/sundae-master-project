@@ -62,7 +62,7 @@ def get_dataloaders(config):
         
         # Apply tokenization to each example in train and validation splits.
         for split in ["train", "test"]:
-            data[split] = data[split].select(range(2000))
+            # data[split] = data[split].select(range(2000))
             data[split] = data[split].map(
                 lambda x: tokenize_wmt_example(
                     x, 
