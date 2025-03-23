@@ -1,0 +1,7 @@
+type: "sundae-diffusion-generation"
+embedding_dim: 512
+nb_layers: 12
+nb_heads: 8
+use_scalenorm: true
+use_glu: true
+use_rotary: true

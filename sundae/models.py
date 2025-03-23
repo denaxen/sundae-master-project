@@ -106,5 +106,5 @@ class SundaeTransformerModule(L.LightningModule):
         return batched_text
     
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.config.learning_rate)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.config.optimizer.learning_rate)
         return optimizer 

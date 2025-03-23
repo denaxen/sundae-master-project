@@ -1,0 +1,11 @@
+type: "sundae-diffusion-mt"
+embedding_dim: 512
+nb_layers: 6      # as in the paper for MT experiments
+nb_heads: 8
+use_scalenorm: true
+use_glu: true
+use_rotary: true
+downsampled_target_length: 64
+target_length_prediction_hidden_dim: 128
+label_smoothing: 0.1
+length_loss_weight: 1.0

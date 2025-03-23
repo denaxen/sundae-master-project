@@ -17,6 +17,9 @@ from utils.other_utils import (
     prepare_logger,
 )
 
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 
 def train(config):
     logger.info("Starting training")

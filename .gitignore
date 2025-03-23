@@ -152,3 +152,4 @@ text8
 logs_train.txt
 tb_logs
 sundae/data/*
+sundae-diffusion-improvement

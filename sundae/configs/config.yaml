@@ -1,15 +1,17 @@
 # Base configuration file
 defaults:
   - _self_
+  - data: text8
+  - model: sundae_diffusion_generation
 
 loader:
-  batch_size: 512
-  global_batch_size: 512
-  num_workers: 4 
+  batch_size: 256
+  global_batch_size: 256
+  num_workers: 4
 
 trainer:
   _target_: lightning.pytorch.Trainer
-  max_epochs: 10
+  max_epochs: 1
   log_every_n_steps: 1
   val_check_interval: 1.0
   precision: 32
@@ -18,6 +20,12 @@ trainer:
     - _target_: callbacks.TextSamplingCallback
       sample_frequency: 500
       nb_samples: ${sample.nb_samples} 
+
+optimizer:
+  learning_rate: 1e-5
+  betas: [0.9, 0.999]
+  eps: 1e-6
+  weight_decay: 0.1
   
 seed: 42
 mode: train
@@ -26,24 +34,7 @@ config_optimizer_and_batch_automatically: false
 save_model: false
 save_model_path: "model.pt"
 
-
-data:
-  name: 'text8'
-  root: 'data/text8'
-  sequence_length: 32
-  vocabulary_size: 27
-
-model:
-  type: "sundae-diffusion"
-  embedding_dim: 512
-  nb_layers: 12
-  nb_heads: 8
-  use_scalenorm: true
-  use_glu: true
-  use_rotary: true
-
 unroll_steps: 3
-learning_rate: 1e-5
 
 sample:
   temperature: 0.8
@@ -63,5 +54,5 @@ wandb:
   entity: "claire-labo"
   group: null
   job_type: null
-  name: ${model.type}-basic
+  name: ${model.type}-${data.name}-basic
   tags:

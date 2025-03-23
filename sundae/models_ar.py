@@ -88,4 +88,4 @@ class AutoregressiveTransformerModule(L.LightningModule):
         return generated
     
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.config.learning_rate) 
+        return torch.optim.Adam(self.parameters(), lr=self.config.optimizer.learning_rate) 

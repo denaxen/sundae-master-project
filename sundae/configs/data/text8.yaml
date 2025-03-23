@@ -1,0 +1,9 @@
+name: 'text8'
+root: 'data/text8'
+sequence_length: 32
+vocabulary_size: 27
+
+loader:
+  batch_size: 256
+  global_batch_size: 256
+  num_workers: 4

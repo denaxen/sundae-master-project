@@ -49,7 +49,7 @@ def preprocess_wmt14(dataset: datasets.Dataset,
             "target_lang": "en" if reverse else "de"
         }
     
-    processed = dataset.map(process_translation)
+    processed = dataset.select(range(3000)).map(process_translation)
     
     # Filter by length if max_length is specified
     if max_length:
@@ -88,21 +88,10 @@ def get_wmt14_ende_data(splits: List[str] = ["train", "validation", "test"],
     return data
 
 if __name__ == "__main__":
-    # Example usage
-    # data = get_wmt14_ende_data(["validation"], max_length=100, cache_dir="data/wmt14")
-    # validation_data = data["validation"]
-    
-    # # Print a sample
-    # print(f"Dataset size: {len(validation_data)}")
-    # print("Sample:")
-    # for i in range(3):
-    #     print(f"Source ({validation_data[i]['source_lang']}): {validation_data[i]['source']}")
-    #     print(f"Target ({validation_data[i]['target_lang']}): {validation_data[i]['target']}")
-    #     print()
     from transformers import AutoTokenizer
 
-    en_tokenizer = AutoTokenizer.from_pretrained("tokenizers/en_tokenizer")
-    de_tokenizer = AutoTokenizer.from_pretrained("tokenizers/de_tokenizer")
+    en_tokenizer = AutoTokenizer.from_pretrained("tokenizers/wmt_en_tokenizer")
+    de_tokenizer = AutoTokenizer.from_pretrained("tokenizers/wmt_de_tokenizer")
     print("Vocab size:", en_tokenizer.vocab_size)
     print("Special tokens:", en_tokenizer.all_special_tokens)
     print("Special tokens mapping:", en_tokenizer.special_tokens_map)
@@ -110,7 +99,7 @@ if __name__ == "__main__":
     print("Special tokens:", de_tokenizer.all_special_tokens)
     print("Special tokens mapping:", de_tokenizer.special_tokens_map)
 
-    data = get_wmt14_ende_data(["train", "validation", "test"], max_length=100, cache_dir="data/wmt14")
+    data = get_wmt14_ende_data(["train", "validation", "test"], max_length=128, cache_dir="data/wmt14")
     print(data)
     for split in data:
         print(f"Split: {split}")
