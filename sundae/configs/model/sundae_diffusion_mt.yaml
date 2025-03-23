@@ -1,11 +1,22 @@
 type: "sundae-diffusion-mt"
 embedding_dim: 512
-nb_layers: 6      # as in the paper for MT experiments
+nb_layers: 6
 nb_heads: 8
-use_scalenorm: true
-use_glu: true
-use_rotary: true
 downsampled_target_length: 64
 target_length_prediction_hidden_dim: 128
 label_smoothing: 0.1
 length_loss_weight: 1.0
+dropout: 0.1
+feedforward_dim: 2048
+
+trainer:
+  _target_: lightning.pytorch.Trainer
+  max_epochs: 1
+  log_every_n_steps: 1
+  val_check_interval: 1.0
+  precision: 32
+  enable_checkpointing: true
+  callbacks:
+    - _target_: callbacks.TextSamplingCallback
+      sample_frequency: 500
+      nb_samples: ${sample.nb_samples} 

@@ -15,13 +15,15 @@ class SundaeMTModule(L.LightningModule):
         self.encoder = TransformerWrapper(
             num_tokens=config.data.vocabulary_size,
             max_seq_len=config.data.source_sequence_length,
+            emb_dropout=config.model.dropout,
             attn_layers=Encoder(
                 dim=config.model.embedding_dim,
                 depth=config.model.nb_layers,
                 heads=config.model.nb_heads,
-                use_scalenorm=config.model.use_scalenorm,
-                ff_glu=config.model.use_glu,
-                rotary_pos_emb=config.model.use_rotary,
+                ff_mult=config.model.feedforward_dim // config.model.embedding_dim,
+                attn_dropout=config.model.dropout,
+                ff_dropout=config.model.dropout,
+                layer_dropout=config.model.dropout,
             ),
             return_only_embed=True
         )
@@ -30,15 +32,17 @@ class SundaeMTModule(L.LightningModule):
         self.decoder = TransformerWrapper(
             num_tokens=config.data.vocabulary_size,
             max_seq_len=config.data.target_sequence_length,
+            emb_dropout=config.model.dropout,
             # the only difference from the encoder is in the causal masking, so we use encder here - don't look at name confusion
             attn_layers=Encoder(
                 dim=config.model.embedding_dim,
-                depth=config.model.nb_layers,
+                depth=config.model.nb_layers,   
                 heads=config.model.nb_heads,
-                use_scalenorm=config.model.use_scalenorm,
-                ff_glu=config.model.use_glu,
-                rotary_pos_emb=config.model.use_rotary,
-                cross_attend=True
+                ff_mult=config.model.feedforward_dim // config.model.embedding_dim,
+                cross_attend=True,
+                attn_dropout=config.model.dropout,
+                ff_dropout=config.model.dropout,
+                layer_dropout=config.model.dropout,
             )
         )
 
@@ -132,11 +136,37 @@ class SundaeMTModule(L.LightningModule):
         gt_len_downsampled = torch.clamp((gt_len + 1) // 2, max=self.config.model.downsampled_target_length - 1)
         length_loss = F.cross_entropy(pred_length_logits, gt_len_downsampled)
         
-        
         loss = token_loss + self.config.model.length_loss_weight * length_loss
+        
+        # Basic loss logging
         self.log('train_loss', loss, prog_bar=True)
         self.log('train_token_loss', token_loss, prog_bar=True)
         self.log('train_length_loss', length_loss, prog_bar=True)
+        
+        # Log the current learning rate
+        current_lr = self.trainer.optimizers[0].param_groups[0]['lr']
+        self.log('learning_rate', current_lr, prog_bar=True)
+        
+        # ----- Length prediction metrics -----
+        # 1. Accuracy of length class prediction
+        pred_len_class = pred_length_logits.argmax(dim=-1)
+        length_class_accuracy = (pred_len_class == gt_len_downsampled).float().mean()
+        self.log('train_length_class_accuracy', length_class_accuracy, prog_bar=True)
+        
+        # 2. Error in token counts (upsample predictions back to token space)
+        pred_token_len = pred_len_class * 2  # Convert back to approximate token length
+        gt_token_len = gt_len  # Actual token length
+        mse_length_error = ((pred_token_len - gt_token_len) ** 2).float().mean()
+        self.log('train_mse_length_error', mse_length_error, prog_bar=True)
+        
+        # 3. Distribution statistics of predicted lengths
+        mean_pred_len = pred_token_len.float().mean()
+        std_pred_len = pred_token_len.float().std()
+        mean_gt_len = gt_token_len.float().mean()
+        self.log('train_mean_pred_length', mean_pred_len)
+        self.log('train_std_pred_length', std_pred_len)
+        self.log('train_mean_gt_length', mean_gt_len)
+        
         return loss
     
     def validation_step(self, batch, batch_idx):
@@ -194,4 +224,34 @@ class SundaeMTModule(L.LightningModule):
             betas=self.config.optimizer.betas,
             eps=self.config.optimizer.eps,
             weight_decay=self.config.optimizer.weight_decay)
-        return optimizer
+        
+        # Implement warmup and cosine annealing schedule as described in the paper
+        # Warmup from 10^-7 to 10^-4 in first 5K steps, then cosine decay to 10^-5
+        scheduler = {
+            'scheduler': torch.optim.lr_scheduler.LambdaLR(
+                optimizer,
+                lambda step: self._get_lr_multiplier(step)
+            ),
+            'interval': 'step',
+            'frequency': 1
+        }
+        
+        return [optimizer], [scheduler]
+    
+    def _get_lr_multiplier(self, step):
+        """Custom learning rate schedule with warmup and cosine decay."""
+        warmup_steps = 5000
+        max_steps = 1000000  # 10^6 as in the paper
+        min_lr = 1e-7
+        peak_lr = 1e-4
+        final_lr = 1e-5
+        
+        # Initial warmup from min_lr to peak_lr
+        if step < warmup_steps:
+            return min_lr + (peak_lr - min_lr) * (step / warmup_steps)
+        
+        # Cosine annealing from peak_lr to final_lr
+        progress = (step - warmup_steps) / (max_steps - warmup_steps)
+        progress = min(max(progress, 0.0), 1.0)  # Clamp to [0, 1]
+        cosine_decay = 0.5 * (1 + torch.cos(torch.tensor(progress * torch.pi)))
+        return final_lr + (peak_lr - final_lr) * cosine_decay

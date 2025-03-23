@@ -9,17 +9,6 @@ loader:
   global_batch_size: 256
   num_workers: 4
 
-trainer:
-  _target_: lightning.pytorch.Trainer
-  max_epochs: 1
-  log_every_n_steps: 1
-  val_check_interval: 1.0
-  precision: 32
-  enable_checkpointing: true
-  callbacks:
-    - _target_: callbacks.TextSamplingCallback
-      sample_frequency: 500
-      nb_samples: ${sample.nb_samples} 
 
 optimizer:
   learning_rate: 1e-5
@@ -43,6 +32,18 @@ sample:
   steps: 1000
   min_steps: 10
   nb_samples: 4
+
+trainer:
+  _target_: lightning.pytorch.Trainer
+  max_epochs: 1
+  log_every_n_steps: 1
+  val_check_interval: 1.0
+  precision: 32
+  enable_checkpointing: true
+  callbacks:
+    - _target_: callbacks.TextSamplingCallback
+      sample_frequency: 500
+      nb_samples: ${sample.nb_samples} 
 
 checkpointing:
   resume_from_ckpt: false
