@@ -7,7 +7,7 @@ en_tokenizer_path: "tokenizers/wmt_en_tokenizer"
 de_tokenizer_path: "tokenizers/wmt_de_tokenizer"
 # de_tokenizer_path: "speedcell4/wmt14-deen-de-32k"
 # en_tokenizer_path: "speedcell4/wmt14-deen-en-32k"
-pad_token: 0
+pad_token: 1
 reverse: false
 max_length: 128
 
