@@ -48,8 +48,8 @@ def preprocess_wmt14(dataset: datasets.Dataset,
             "source_lang": "de" if reverse else "en",
             "target_lang": "en" if reverse else "de"
         }
-    
-    processed = dataset.select(range(3000)).map(process_translation)
+    # dataset = dataset.select(range(3000))
+    processed = dataset.map(process_translation)
     
     # Filter by length if max_length is specified
     if max_length:
