@@ -2,6 +2,10 @@ from torch.utils.data import DataLoader
 from data import get_text8
 from wmt14_example import get_wmt14_ende_data
 from transformers import AutoTokenizer
+from pathlib import Path
+import os
+import hashlib
+import datasets
 
 def tokenize_wmt_example(example, en_tokenizer, de_tokenizer, add_special_tokens=True, max_length=None):
     # Tokenize the source and target fields.
@@ -48,32 +52,58 @@ def get_dataloaders(config):
             pin_memory=True,
         )
     elif config.data.name.lower() == "wmt14-ende":
-        # Load the WMT14 dataset; here we assume we're doing English-to-German.
-        # You can adjust the language pair or use a config flag (e.g., reverse) as needed.
-        data = get_wmt14_ende_data(
-            splits=["train", "test"],
-            max_length=config.data.max_length,  # e.g., maximum token length for filtering
-            reverse=config.data.get("reverse", False),
-            cache_dir=config.data.root
-        )
-        # Load tokenizers; assume paths are provided in config.
-        en_tokenizer = AutoTokenizer.from_pretrained(config.data.en_tokenizer_path)
-        de_tokenizer = AutoTokenizer.from_pretrained(config.data.de_tokenizer_path)
+        # Create a unique cache key based on dataset parameters
+        cache_params = f"maxlen_{config.data.max_length}_rev_{config.data.get('reverse', False)}"
+        cache_hash = hashlib.md5(cache_params.encode()).hexdigest()[:10]
+        cache_dir = os.path.join(config.data.root, "tokenized_cache")
+        train_cache_path = os.path.join(cache_dir, f"train_{cache_hash}")
+        test_cache_path = os.path.join(cache_dir, f"test_{cache_hash}")
         
-        # Apply tokenization to each example in train and validation splits.
-        for split in ["train", "test"]:
-            # data[split] = data[split].select(range(2000))
-            data[split] = data[split].map(
-                lambda x: tokenize_wmt_example(
-                    x, 
-                    en_tokenizer, 
-                    de_tokenizer, 
-                    max_length=config.data.max_length
-                ),
-                remove_columns=["translation", "source_lang", "target_lang"],
+        # Check if we have cached datasets
+        train_cached = os.path.exists(train_cache_path)
+        test_cached = os.path.exists(test_cache_path)
+        
+        if train_cached and test_cached:
+            print(f"Loading tokenized datasets from cache: {cache_dir}")
+            # Load datasets from cache
+            data = {
+                "train": datasets.load_from_disk(train_cache_path),
+                "test": datasets.load_from_disk(test_cache_path)
+            }
+        else:
+            print("Tokenized datasets not found in cache, processing data...")
+            # Load the WMT14 dataset; here we assume we're doing English-to-German.
+            data = get_wmt14_ende_data(
+                splits=["train", "test"],
+                max_length=config.data.max_length,
+                reverse=config.data.get("reverse", False),
+                cache_dir=config.data.root
             )
-            # Set format to return PyTorch tensors for the tokenized columns.
-            data[split].set_format("torch", columns=["source", "target"])
+            # Load tokenizers; assume paths are provided in config.
+            en_tokenizer = AutoTokenizer.from_pretrained(config.data.en_tokenizer_path)
+            de_tokenizer = AutoTokenizer.from_pretrained(config.data.de_tokenizer_path)
+            
+            # Apply tokenization to each example in train and validation splits.
+            for split in ["train", "test"]:
+                # if split == "train":
+                #     data[split] = data[split].select(range(30000))
+                data[split] = data[split].map(
+                    lambda x: tokenize_wmt_example(
+                        x, 
+                        en_tokenizer, 
+                        de_tokenizer, 
+                        max_length=config.data.max_length
+                    ),
+                    remove_columns=["translation", "source_lang", "target_lang"],
+                )
+                # Set format to return PyTorch tensors for the tokenized columns.
+                data[split].set_format("torch", columns=["source", "target"])
+                
+                # Save processed datasets to cache
+                cache_path = train_cache_path if split == "train" else test_cache_path
+                os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+                data[split].save_to_disk(cache_path)
+                print(f"Saved {split} dataset to {cache_path}")
         
         # Create dataloaders for WMT14. (We use only train and validation for training and evaluation.)
         train_loader = DataLoader(
