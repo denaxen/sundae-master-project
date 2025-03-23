@@ -2,7 +2,7 @@ name: 'wmt14-ende'
 root: 'data/wmt14'
 source_sequence_length: 128
 target_sequence_length: 128
-vocabulary_size: 32000
+vocabulary_size: 32001
 en_tokenizer_path: "tokenizers/wmt_en_tokenizer"
 de_tokenizer_path: "tokenizers/wmt_de_tokenizer"
 # de_tokenizer_path: "speedcell4/wmt14-deen-de-32k"

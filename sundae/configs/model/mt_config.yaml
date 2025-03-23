@@ -1,5 +1,0 @@
-trainer:
-  callbacks:
-    - _target_: callbacks.TranslationSamplingCallback
-      sample_frequency: 500
-      nb_samples: ${sample.nb_samples} 

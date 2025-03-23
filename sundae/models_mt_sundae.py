@@ -30,7 +30,8 @@ class SundaeMTModule(L.LightningModule):
         self.decoder = TransformerWrapper(
             num_tokens=config.data.vocabulary_size,
             max_seq_len=config.data.target_sequence_length,
-            attn_layers=Decoder(
+            # the only difference from the encoder is in the causal masking, so we use encder here - don't look at name confusion
+            attn_layers=Encoder(
                 dim=config.model.embedding_dim,
                 depth=config.model.nb_layers,
                 heads=config.model.nb_heads,
@@ -60,6 +61,8 @@ class SundaeMTModule(L.LightningModule):
             torch.nn.ReLU(),
             torch.nn.Linear(config.model.target_length_prediction_hidden_dim, config.model.downsampled_target_length)
         )
+
+        self.decoder.token_emb = self.encoder.token_emb
         
         logger.info(f"Total trainable parameters: {sum(p.numel() for p in self.parameters() if p.requires_grad):,}")
     
@@ -72,6 +75,11 @@ class SundaeMTModule(L.LightningModule):
         return mask * random_text + (~mask) * batched_text
     
     def forward(self, src, tgt):
+        # Validate input tokens
+        max_idx = torch.max(src).item()
+        if max_idx > self.config.data.vocabulary_size:
+            raise ValueError(f"Found token ID {max_idx} in source text, but vocabulary size is {self.config.data.vocabulary_size}")
+        
         # Encode source sentence
         src_enc = self.encoder(src)
 
