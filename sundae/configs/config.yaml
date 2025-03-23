@@ -1,8 +1,23 @@
 # Base configuration file
 defaults:
   - _self_
-  - trainer: default.yaml
-  - loader: default.yaml
+
+loader:
+  batch_size: 512
+  global_batch_size: 512
+  num_workers: 4 
+
+trainer:
+  _target_: lightning.pytorch.Trainer
+  max_epochs: 10
+  log_every_n_steps: 1
+  val_check_interval: 1.0
+  precision: 32
+  enable_checkpointing: true
+  callbacks:
+    - _target_: callbacks.TextSamplingCallback
+      sample_frequency: 500
+      nb_samples: ${sample.nb_samples} 
   
 seed: 42
 mode: train
@@ -11,7 +26,7 @@ config_optimizer_and_batch_automatically: false
 save_model: false
 save_model_path: "model.pt"
 
-# Main model configuration
+
 data:
   name: 'text8'
   root: 'data/text8'

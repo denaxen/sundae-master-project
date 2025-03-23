@@ -1,3 +1,5 @@
 lightning
 loguru
 x-transformers==0.22.0
+datasets
+transformers
