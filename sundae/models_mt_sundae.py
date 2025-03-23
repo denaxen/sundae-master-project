@@ -157,7 +157,9 @@ class SundaeMTModule(L.LightningModule):
         pred_token_len = pred_len_class * 2  # Convert back to approximate token length
         gt_token_len = gt_len  # Actual token length
         mse_length_error = ((pred_token_len - gt_token_len) ** 2).float().mean()
+        rmse_length_error = torch.sqrt(mse_length_error)
         self.log('train_mse_length_error', mse_length_error, prog_bar=True)
+        self.log('train_rmse_length_error', rmse_length_error, prog_bar=True)
         
         # 3. Distribution statistics of predicted lengths
         mean_pred_len = pred_token_len.float().mean()
