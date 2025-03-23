@@ -1,9 +1,13 @@
+import math
 import torch
 import torch.nn.functional as F
 from torch.distributions.categorical import Categorical
 import lightning as L
 from x_transformers import TransformerWrapper, Encoder, Decoder
 from loguru import logger
+import sacrebleu
+import nltk
+import math
 
 class SundaeMTModule(L.LightningModule):
     def __init__(self, config):
@@ -33,7 +37,7 @@ class SundaeMTModule(L.LightningModule):
             num_tokens=config.data.vocabulary_size,
             max_seq_len=config.data.target_sequence_length,
             emb_dropout=config.model.dropout,
-            # the only difference from the encoder is in the causal masking, so we use encder here - don't look at name confusion
+            # using encoder-type layers with cross-attention for conditioning
             attn_layers=Encoder(
                 dim=config.model.embedding_dim,
                 depth=config.model.nb_layers,   
@@ -56,9 +60,7 @@ class SundaeMTModule(L.LightningModule):
         )
         
         # -------------------------
-        # 4) Length Predictor
-        # (Detaches encoder output to avoid
-        #  backprop into the encoder)
+        # Length Predictor (detached from encoder)
         # -------------------------
         self.length_predictor = torch.nn.Sequential(
             torch.nn.Linear(config.model.embedding_dim, config.model.target_length_prediction_hidden_dim),
@@ -66,6 +68,7 @@ class SundaeMTModule(L.LightningModule):
             torch.nn.Linear(config.model.target_length_prediction_hidden_dim, config.model.downsampled_target_length)
         )
 
+        # Share token embeddings between encoder and decoder
         self.decoder.token_emb = self.encoder.token_emb
         
         logger.info(f"Total trainable parameters: {sum(p.numel() for p in self.parameters() if p.requires_grad):,}")
@@ -87,22 +90,20 @@ class SundaeMTModule(L.LightningModule):
         # Encode source sentence
         src_enc = self.encoder(src)
 
-        # 2) DETACH for length predictor
-        # so length loss won't backprop to encoder
+        # Detach encoder output for length prediction to avoid backprop into encoder
         with torch.no_grad():
             src_enc_detached = src_enc.clone().detach()
         
-         # 3) Predict length from the (mean-pooled) detached encoding
+        # Predict length from the mean-pooled detached encoding
         pred_length_logits = self.length_predictor(src_enc_detached.mean(dim=1))
 
-        # 4) Compute ground-truth length classes (downsampled)
-        #    Then create a length embedding (teacher forcing)
-        gt_len = (tgt != self.config.data.pad_token).sum(dim=1)  # actual target length
+        # Compute ground-truth length classes (downsampled)
+        gt_len = (tgt != self.config.data.pad_token).sum(dim=1)  # actual token count per sentence
         gt_len_downsampled = torch.clamp((gt_len + 1) // 2, max=self.config.model.downsampled_target_length - 1)
-        length_emb = self.length_embed(gt_len_downsampled)       # shape: [batch_size, d_model]
+        length_emb = self.length_embed(gt_len_downsampled)  # shape: [batch_size, d_model]
 
-        # 5) Prepend length embedding to encoder output
-        length_emb = length_emb.unsqueeze(1)                     # shape: [batch_size, 1, d_model]
+        # Prepend length embedding to encoder output
+        length_emb = length_emb.unsqueeze(1)  # shape: [batch_size, 1, d_model]
         src_enc_with_len = torch.cat([length_emb, src_enc], dim=1)
         
         # Begin with a corrupted version of the target text
@@ -111,60 +112,45 @@ class SundaeMTModule(L.LightningModule):
         
         # Unrolled denoising steps
         for _ in range(self.config.unroll_steps):
-            # Decode using the current target and conditioning on the source encoding
             logits = self.decoder(current_tgt, context=src_enc_with_len)
-            # Sample new tokens from the predicted distribution (detach to prevent gradient flow)
             current_tgt = Categorical(logits=logits).sample().detach()
             all_logits.append(logits)
         
-        # Concatenate logits from all unroll steps for loss computation
         final_logits = torch.cat(all_logits, dim=0)
         return final_logits, pred_length_logits
     
     def training_step(self, batch, batch_idx):
-        # Assume batch is a tuple: (src, tgt)
         src, tgt = batch['source'], batch['target']
         logits, pred_length_logits = self.forward(src, tgt)
         
-        # Repeat ground truth target for each unroll step along the batch dimension
         repeated_tgt = tgt.repeat(self.config.unroll_steps, 1)
         token_loss = F.cross_entropy(logits.permute(0, 2, 1), repeated_tgt, label_smoothing=self.config.model.label_smoothing)
         
-        # Compute ground truth target lengths (downsampled if necessary)
-        # Here, we assume pad tokens are given by config.data.pad_token
         gt_len = (tgt != self.config.data.pad_token).sum(dim=1)
         gt_len_downsampled = torch.clamp((gt_len + 1) // 2, max=self.config.model.downsampled_target_length - 1)
         length_loss = F.cross_entropy(pred_length_logits, gt_len_downsampled)
         
         loss = token_loss + self.config.model.length_loss_weight * length_loss
         
-        # Basic loss logging
         self.log('train_loss', loss, prog_bar=True)
         self.log('train_token_loss', token_loss, prog_bar=True)
         self.log('train_length_loss', length_loss, prog_bar=True)
         
-        # Log the current learning rate
         current_lr = self.trainer.optimizers[0].param_groups[0]['lr']
         self.log('learning_rate', current_lr, prog_bar=True)
         
-        # ----- Length prediction metrics -----
-        # 1. Accuracy of length class prediction
         pred_len_class = pred_length_logits.argmax(dim=-1)
         length_class_accuracy = (pred_len_class == gt_len_downsampled).float().mean()
         self.log('train_length_class_accuracy', length_class_accuracy, prog_bar=True)
         
-        # 2. Error in token counts (upsample predictions back to token space)
-        pred_token_len = pred_len_class * 2  # Convert back to approximate token length
-        gt_token_len = gt_len  # Actual token length
-        mse_length_error = ((pred_token_len - gt_token_len) ** 2).float().mean()
+        pred_token_len = pred_len_class * 2  # upsampled approximate token length
+        mse_length_error = ((pred_token_len - gt_len) ** 2).float().mean()
         rmse_length_error = torch.sqrt(mse_length_error)
-        self.log('train_mse_length_error', mse_length_error, prog_bar=True)
         self.log('train_rmse_length_error', rmse_length_error, prog_bar=True)
         
-        # 3. Distribution statistics of predicted lengths
         mean_pred_len = pred_token_len.float().mean()
         std_pred_len = pred_token_len.float().std()
-        mean_gt_len = gt_token_len.float().mean()
+        mean_gt_len = gt_len.float().mean()
         self.log('train_mean_pred_length', mean_pred_len)
         self.log('train_std_pred_length', std_pred_len)
         self.log('train_mean_gt_length', mean_gt_len)
@@ -184,19 +170,15 @@ class SundaeMTModule(L.LightningModule):
         return loss
     
     def sample_translation(self, src, min_steps=4):
-        """Generate translation for a given source sentence batch."""
+        """Generate translation for a given source batch."""
         src_enc = self.encoder(src)
-
-        # Predict length from src_enc (no teacher forcing)
         pred_length_logits = self.length_predictor(src_enc.mean(dim=1))
-        pred_len_class = pred_length_logits.argmax(dim=-1)  # shape: [batch_size]
-
-        # Turn it into embedding
-        length_emb = self.length_embed(pred_len_class)       # shape: [batch_size, d_model]
-        length_emb = length_emb.unsqueeze(1)                # shape: [batch_size, 1, d_model]
+        pred_len_class = pred_length_logits.argmax(dim=-1)
+        
+        length_emb = self.length_embed(pred_len_class)
+        length_emb = length_emb.unsqueeze(1)
         src_enc_with_len = torch.cat([length_emb, src_enc], dim=1)
         
-        # Initialize random target of "predicted" length
         batch_size = src.shape[0]
         max_len = self.config.data.target_sequence_length
         init_tgt = torch.randint(
@@ -204,21 +186,62 @@ class SundaeMTModule(L.LightningModule):
             (batch_size, max_len),
             device=src.device
         )
-        # Optionally set tokens beyond predicted length to pad
         predicted_len_upsampled = pred_len_class * 2
         for i in range(batch_size):
             length_i = predicted_len_upsampled[i]
             if length_i < max_len:
                 init_tgt[i, length_i:] = self.config.data.pad_token
 
-        # Iterative refinement
         for step_idx in range(self.config.sample.steps):
             logits = self.decoder(init_tgt, context=src_enc_with_len)
             sample = Categorical(logits=logits / self.config.sample.temperature).sample()
             init_tgt = sample
-        
         logger.info(f"Stopped sampling after {step_idx+1} steps.")
         return init_tgt
+    
+    # -------------------------
+    # BLEU Evaluation (Test)
+    # -------------------------
+    def test_step(self, batch, batch_idx):
+        src, tgt = batch['source'], batch['target']
+        # Generate translations using your sample_translation method
+        generated_tokens = self.sample_translation(src)
+        
+        # Return the raw tokens - no decoding needed here
+        return {"generated_tokens": generated_tokens, "reference_tokens": tgt}
+    
+    def on_test_epoch_end(self, outputs):
+        # Get appropriate tokenizer path based on target language
+        target_lang = "de" if not self.config.data.get("reverse", False) else "en"
+        target_tokenizer_path = self.config.data.de_tokenizer_path if target_lang == "de" else self.config.data.en_tokenizer_path
+        
+        # Load tokenizer only once for the whole batch
+        if not hasattr(self, 'target_tokenizer'):
+            from transformers import AutoTokenizer
+            self.target_tokenizer = AutoTokenizer.from_pretrained(target_tokenizer_path)
+        
+        # Decode all tokens
+        all_generated = []
+        all_references = []
+        
+        for output_batch in outputs:
+            for gen_tokens, ref_tokens in zip(output_batch["generated_tokens"], output_batch["reference_tokens"]):
+                gen_text = self.target_tokenizer.decode(gen_tokens.tolist(), skip_special_tokens=True)
+                ref_text = self.target_tokenizer.decode(ref_tokens.tolist(), skip_special_tokens=True)
+                all_generated.append(gen_text)
+                all_references.append(ref_text)
+        
+        # Calculate SacreBLEU score
+        sacrebleu_score = sacrebleu.corpus_bleu(all_generated, [all_references])
+        
+        # Calculate classical BLEU using NLTK
+        tokenized_generated = [gen.split() for gen in all_generated]
+        tokenized_references = [[ref.split()] for ref in all_references]
+        nltk_bleu = nltk.translate.bleu_score.corpus_bleu(tokenized_references, tokenized_generated) * 100
+        
+        self.log('test_sacrebleu', sacrebleu_score.score)
+        self.log('test_nltk_bleu', nltk_bleu)
+        logger.info(f"SacreBLEU: {sacrebleu_score.score:.2f}, NLTK BLEU: {nltk_bleu:.2f}")
     
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(),
@@ -227,8 +250,6 @@ class SundaeMTModule(L.LightningModule):
             eps=self.config.optimizer.eps,
             weight_decay=self.config.optimizer.weight_decay)
         
-        # Implement warmup and cosine annealing schedule as described in the paper
-        # Warmup from 10^-7 to 10^-4 in first 5K steps, then cosine decay to 10^-5
         scheduler = {
             'scheduler': torch.optim.lr_scheduler.LambdaLR(
                 optimizer,
@@ -248,15 +269,14 @@ class SundaeMTModule(L.LightningModule):
         peak_lr = self.config.model.peak_lr
         final_lr = self.config.optimizer.learning_rate
 
-        min_multiplier = min_lr / peak_lr # e.g., 1e-7/1e-4 = 0.001
+        min_multiplier = min_lr / peak_lr  # e.g., 1e-7/1e-4 = 0.001
         peak_multiplier = 1.0
-        final_multiplier = final_lr / peak_lr # e.g., 1e-5/1e-4 = 0.1
+        final_multiplier = final_lr / peak_lr  # e.g., 1e-5/1e-4 = 0.1
         
         if step < warmup_steps:
             return min_multiplier + (peak_multiplier - min_multiplier) * (step / warmup_steps)
         
-        # Cosine annealing from peak_lr to final_lr
         progress = (step - warmup_steps) / (max_steps - warmup_steps)
-        progress = min(max(progress, 0.0), 1.0)  # Clamp progress to [0, 1]
+        progress = min(max(progress, 0.0), 1.0)
         cosine_decay = 0.5 * (1 + math.cos(math.pi * progress))
         return final_multiplier + (peak_multiplier - final_multiplier) * cosine_decay

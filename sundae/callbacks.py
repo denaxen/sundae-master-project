@@ -109,3 +109,18 @@ class TranslationSamplingCallback(L.Callback):
             # Return to training mode if needed
             if was_training:
                 pl_module.train() 
+
+
+class TestEveryNStepsCallback(L.Callback):
+    def __init__(self, test_interval: int = 100):
+        super().__init__()
+        self.test_interval = test_interval
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        # Only run test every test_interval steps (and skip step 0)
+        if trainer.global_step > 0 and trainer.global_step % self.test_interval == 0:
+            # Get the validation dataloader from the trainer
+            val_dataloader = trainer.val_dataloaders
+            
+            # Use test() and explicitly provide the dataloader
+            trainer.test(pl_module, dataloaders=val_dataloader, verbose=True)

@@ -3,3 +3,5 @@ loguru
 x-transformers
 datasets
 transformers
+sacrebleu
+nltk
