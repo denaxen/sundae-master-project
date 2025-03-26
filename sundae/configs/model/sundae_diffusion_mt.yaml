@@ -23,8 +23,8 @@ trainer:
   precision: 32
   enable_checkpointing: true
   callbacks:
-    - _target_: callbacks.TextSamplingCallback
-      sample_frequency: 500
+    - _target_: callbacks.TranslationSamplingCallback
+      sample_frequency: 1000
       nb_samples: ${sample.nb_samples} 
     # - _target_: callbacks.ValEveryNStepsCallback
     #   test_interval: 2
