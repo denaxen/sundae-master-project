@@ -26,10 +26,10 @@ save_model_path: "model.pt"
 unroll_steps: 3
 
 sample:
-  temperature: 0.8
+  temperature: 0.4
   sample_proportion: 0.3
   sample_frequency: 1
-  steps: 1000
+  steps: 16
   min_steps: 10
   nb_samples: 4
 

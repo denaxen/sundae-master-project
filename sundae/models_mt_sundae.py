@@ -14,6 +14,7 @@ class SundaeMTModule(L.LightningModule):
         super().__init__()
         self.config = config
         self.save_hyperparameters()
+        self.my_val_outputs = []
         
         # Encoder: process the source sentence
         self.encoder = TransformerWrapper(
@@ -167,7 +168,53 @@ class SundaeMTModule(L.LightningModule):
         length_loss = F.cross_entropy(pred_length_logits, gt_len_downsampled)
         loss = token_loss + self.config.model.length_loss_weight * length_loss
         self.log('val_loss', loss, prog_bar=True)
-        return loss
+        
+        out = {"loss": loss}
+        # Only sample from the first batch (to keep evaluation fast)
+        if batch_idx == 0:
+            generated_tokens = self.sample_translation(src)
+            out["generated_tokens"] = generated_tokens
+            out["reference_tokens"] = tgt
+        self.my_val_outputs.append(out)
+        return out
+
+    def on_validation_epoch_end(self):
+        # Load the tokenizer if not already loaded
+        target_lang = "de" if not self.config.data.get("reverse", False) else "en"
+        target_tokenizer_path = self.config.data.de_tokenizer_path if target_lang == "de" else self.config.data.en_tokenizer_path
+        if not hasattr(self, 'target_tokenizer'):
+            from transformers import AutoTokenizer
+            self.target_tokenizer = AutoTokenizer.from_pretrained(target_tokenizer_path)
+        
+        all_generated = []
+        all_references = []
+        # Only process outputs that contain sample translations
+        for output in self.my_val_outputs:
+            if "generated_tokens" in output:
+                for gen_tokens, ref_tokens in zip(output["generated_tokens"], output["reference_tokens"]):
+                    gen_text = self.target_tokenizer.decode(gen_tokens.tolist(), skip_special_tokens=True)
+                    ref_text = self.target_tokenizer.decode(ref_tokens.tolist(), skip_special_tokens=True)
+                    all_generated.append(gen_text)
+                    all_references.append(ref_text)
+        
+        if all_generated and all_references:
+            # Fix 1: For SacreBLEU, references should be a list where each item is a list of references
+            # For single reference per source, we need [[ref1], [ref2], ...] format
+            references_for_sacrebleu = [[ref] for ref in all_references]
+            sacrebleu_score = sacrebleu.corpus_bleu(all_generated, references_for_sacrebleu)
+            
+            # Fix 2: For NLTK BLEU, we need to tokenize and structure references correctly
+            tokenized_generated = [gen.split() for gen in all_generated]
+            # Each reference needs to be a list in a list - [[tokens1], [tokens2], ...]
+            tokenized_references = [[ref.split()] for ref in all_references]
+            nltk_bleu = nltk.translate.bleu_score.corpus_bleu(tokenized_references, tokenized_generated) * 100
+            
+            self.log('val_sacrebleu', sacrebleu_score.score)
+            self.log('val_nltk_bleu', nltk_bleu)
+            logger.info(f"Validation SacreBLEU: {sacrebleu_score.score:.2f}, NLTK BLEU: {nltk_bleu:.2f}")
+        
+        self.my_val_outputs.clear()
+
     
     def sample_translation(self, src, min_steps=4):
         """Generate translation for a given source batch."""
@@ -198,50 +245,6 @@ class SundaeMTModule(L.LightningModule):
             init_tgt = sample
         logger.info(f"Stopped sampling after {step_idx+1} steps.")
         return init_tgt
-    
-    # -------------------------
-    # BLEU Evaluation (Test)
-    # -------------------------
-    def test_step(self, batch, batch_idx):
-        src, tgt = batch['source'], batch['target']
-        # Generate translations using your sample_translation method
-        generated_tokens = self.sample_translation(src)
-        
-        # Return the raw tokens - no decoding needed here
-        return {"generated_tokens": generated_tokens, "reference_tokens": tgt}
-    
-    def on_test_epoch_end(self, outputs):
-        # Get appropriate tokenizer path based on target language
-        target_lang = "de" if not self.config.data.get("reverse", False) else "en"
-        target_tokenizer_path = self.config.data.de_tokenizer_path if target_lang == "de" else self.config.data.en_tokenizer_path
-        
-        # Load tokenizer only once for the whole batch
-        if not hasattr(self, 'target_tokenizer'):
-            from transformers import AutoTokenizer
-            self.target_tokenizer = AutoTokenizer.from_pretrained(target_tokenizer_path)
-        
-        # Decode all tokens
-        all_generated = []
-        all_references = []
-        
-        for output_batch in outputs:
-            for gen_tokens, ref_tokens in zip(output_batch["generated_tokens"], output_batch["reference_tokens"]):
-                gen_text = self.target_tokenizer.decode(gen_tokens.tolist(), skip_special_tokens=True)
-                ref_text = self.target_tokenizer.decode(ref_tokens.tolist(), skip_special_tokens=True)
-                all_generated.append(gen_text)
-                all_references.append(ref_text)
-        
-        # Calculate SacreBLEU score
-        sacrebleu_score = sacrebleu.corpus_bleu(all_generated, [all_references])
-        
-        # Calculate classical BLEU using NLTK
-        tokenized_generated = [gen.split() for gen in all_generated]
-        tokenized_references = [[ref.split()] for ref in all_references]
-        nltk_bleu = nltk.translate.bleu_score.corpus_bleu(tokenized_references, tokenized_generated) * 100
-        
-        self.log('test_sacrebleu', sacrebleu_score.score)
-        self.log('test_nltk_bleu', nltk_bleu)
-        logger.info(f"SacreBLEU: {sacrebleu_score.score:.2f}, NLTK BLEU: {nltk_bleu:.2f}")
     
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(),

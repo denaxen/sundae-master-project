@@ -111,7 +111,7 @@ class TranslationSamplingCallback(L.Callback):
                 pl_module.train() 
 
 
-class TestEveryNStepsCallback(L.Callback):
+class ValEveryNStepsCallback(L.Callback):
     def __init__(self, test_interval: int = 100):
         super().__init__()
         self.test_interval = test_interval
@@ -123,4 +123,4 @@ class TestEveryNStepsCallback(L.Callback):
             val_dataloader = trainer.val_dataloaders
             
             # Use test() and explicitly provide the dataloader
-            trainer.test(pl_module, dataloaders=val_dataloader, verbose=True)
+            trainer.validate(pl_module, dataloaders=val_dataloader, verbose=True)

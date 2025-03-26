@@ -1,0 +1,72 @@
+data:
+  name: 'text8'
+  root: 'data/text8'
+  sequence_length: 32
+  vocabulary_size: 27
+
+  loader:
+    batch_size: 256
+    global_batch_size: 256
+    num_workers: 4
+
+model:
+  type: "sundae-diffusion-generation"
+  embedding_dim: 512
+  nb_layers: 12
+  nb_heads: 8
+  use_scalenorm: true
+  use_glu: true
+  use_rotary: true
+
+  trainer:
+    _target_: lightning.pytorch.Trainer
+    max_epochs: 1
+    log_every_n_steps: 1
+    val_check_interval: 1.0
+    precision: 32
+    enable_checkpointing: true
+    callbacks:
+      - _target_: callbacks.TextSamplingCallback
+        sample_frequency: 500
+        nb_samples: ${sample.nb_samples} 
+
+loader:
+  batch_size: 256
+  global_batch_size: 256
+  num_workers: 4
+
+optimizer:
+  learning_rate: 1e-5
+  betas: [0.9, 0.999]
+  eps: 1e-6
+  weight_decay: 0.1
+  
+seed: 42
+mode: train
+compile: false
+config_optimizer_and_batch_automatically: false
+save_model: false
+save_model_path: "model.pt"
+
+unroll_steps: 3
+
+sample:
+  temperature: 0.8
+  sample_proportion: 0.3
+  sample_frequency: 1
+  steps: 1000
+  min_steps: 10
+  nb_samples: 4
+
+checkpointing:
+  resume_from_ckpt: false
+  resume_ckpt_path: null
+
+wandb:
+  project: sundae-diffusion-improvement
+  notes: ""
+  entity: "claire-labo"
+  group: null
+  job_type: null
+  name: ${model.type}-${data.name}-basic
+  tags:

@@ -1,0 +1,84 @@
+data:
+  name: 'wmt14-ende'
+  root: 'data/wmt14'
+  source_sequence_length: 128
+  target_sequence_length: 128
+  vocabulary_size: 32001
+  en_tokenizer_path: "tokenizers/wmt_en_tokenizer"
+  de_tokenizer_path: "tokenizers/wmt_de_tokenizer"
+  # de_tokenizer_path: "speedcell4/wmt14-deen-de-32k"
+  # en_tokenizer_path: "speedcell4/wmt14-deen-en-32k"
+  bos_token: 0
+  pad_token: 1
+  reverse: false
+  max_length: 128
+
+  loader:
+    batch_size: 64
+    global_batch_size: 64
+    num_workers: 4
+
+model:
+  type: "ar-mt-transformer"
+  embedding_dim: 512
+  nb_layers: 6
+  nb_heads: 8
+  label_smoothing: 0.1
+  dropout: 0.1
+  feedforward_dim: 2048
+
+  min_lr: 1e-7
+  peak_lr: 1e-4
+  warmup_steps: 5000
+
+
+  trainer:
+    _target_: lightning.pytorch.Trainer
+    max_epochs: 1
+    log_every_n_steps: 1
+    val_check_interval: 1000
+    max_steps: 20000
+    precision: 32
+    enable_checkpointing: true
+    callbacks:
+      - _target_: callbacks.TranslationSamplingCallback
+        sample_frequency: 1000
+        nb_samples: ${sample.nb_samples} 
+
+loader:
+  batch_size: 256
+  global_batch_size: 256
+  num_workers: 4
+
+optimizer:
+  learning_rate: 1e-5
+  betas: [0.9, 0.999]
+  eps: 1e-6
+  weight_decay: 0.1
+  
+seed: 42
+mode: train
+compile: false
+save_model: false
+save_model_path: "model.pt"
+
+sample:
+  temperature: 0.4
+  sample_proportion: 0.3
+  sample_frequency: 1
+  steps: 16
+  min_steps: 10
+  nb_samples: 4
+
+checkpointing:
+  resume_from_ckpt: false
+  resume_ckpt_path: null
+
+wandb:
+  project: sundae-diffusion-improvement
+  notes: ""
+  entity: "claire-labo"
+  group: null
+  job_type: null
+  name: ${model.type}-${data.name}-basic
+  tags:

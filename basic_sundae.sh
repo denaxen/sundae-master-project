@@ -1,3 +1,3 @@
 cd sundae
 pip install -r requirements.txt
-python main.py
+python main.py --config-name=sundae_generation

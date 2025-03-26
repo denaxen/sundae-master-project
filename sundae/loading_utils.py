@@ -14,6 +14,9 @@ def get_module(config):
     elif model_type == "sundae-diffusion-mt":
         module_path = "models_mt_sundae"
         class_name = "SundaeMTModule"
+    elif model_type == "ar-mt-transformer":
+        module_path = "ar_mt_transformer"
+        class_name = "ARTransformerBase"
     else:
         raise ValueError(f"Unknown model type {model_type}. Supported types are 'diffusion' and 'autoregressive'.")
     
