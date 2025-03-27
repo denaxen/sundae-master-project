@@ -7,6 +7,22 @@ import math
 import sacrebleu
 import nltk
 
+def generate_tgt_mask(tgt, pad_token_id):
+    B, T = tgt.size()
+    # Create a lower-triangular (causal) mask: True means allowed.
+    causal_mask = torch.tril(torch.ones((T, T), dtype=torch.bool, device=tgt.device))
+    
+    # Create the target padding mask: True where tokens are not pad.
+    tgt_padding_mask = (tgt != pad_token_id)  # shape: (B, T)
+    
+    # Expand masks to combine: 
+    # - causal_mask -> (1, T, T)
+    # - tgt_padding_mask -> (B, 1, T)
+    combined_mask = causal_mask.unsqueeze(0) & tgt_padding_mask.unsqueeze(1)
+    
+    # Now unsqueeze to add the head dimension: (B, 1, T, T)
+    return combined_mask.unsqueeze(1)
+
 class ARTransformerBase(L.LightningModule):
     """
     A standard Transformer 'base' autoregressive encoder-decoder model.
@@ -33,6 +49,7 @@ class ARTransformerBase(L.LightningModule):
         self.my_val_outputs = []  # Add this to store validation outputs
         
         # Create a standard Transformer with more detailed config
+        self.pad_token_id = config.data.pad_token
         self.model = XTransformer(
             dim = config.model.embedding_dim,  # renamed from dim for consistency
             enc_num_tokens = config.data.vocabulary_size,  # renamed from vocab_size
@@ -49,17 +66,13 @@ class ARTransformerBase(L.LightningModule):
             attn_dropout = config.model.dropout,
             ff_dropout = config.model.dropout,
             ff_mult = config.model.feedforward_dim // config.model.embedding_dim,
+            pad_value = self.pad_token_id,
+            ignore_index=self.pad_token_id
         )
 
         # Store a few parameters locally for convenience
-        self.pad_token_id = config.data.pad_token
         self.lr = config.optimizer.learning_rate  # use final_lr from optimizer config
 
-    def forward(self, src, tgt, src_mask=None, tgt_mask=None):
-        """
-        Forward pass (no cross-entropy).
-        """
-        return self.model(src, tgt, mask=src_mask)
 
     def training_step(self, batch, batch_idx):
         """
@@ -68,19 +81,39 @@ class ARTransformerBase(L.LightningModule):
         """
         src, tgt = batch['source'], batch['target']
         
-        # Construct a source mask (True for tokens we want to attend to, False for pad)
+        # # Load tokenizers if not already loaded
+        # if not hasattr(self, 'source_tokenizer') or not hasattr(self, 'target_tokenizer'):
+        #     from transformers import AutoTokenizer
+        #     # Determine source/target languages based on reverse flag
+        #     source_lang = "de" if self.config.data.get("reverse", False) else "en"
+        #     target_lang = "en" if source_lang == "de" else "de"
+            
+        #     source_tokenizer_path = self.config.data.de_tokenizer_path if source_lang == "de" else self.config.data.en_tokenizer_path
+        #     target_tokenizer_path = self.config.data.de_tokenizer_path if target_lang == "de" else self.config.data.en_tokenizer_path
+            
+        #     self.source_tokenizer = AutoTokenizer.from_pretrained(source_tokenizer_path)
+        #     self.target_tokenizer = AutoTokenizer.from_pretrained(target_tokenizer_path)
+        
+        # # Decode and print the source and target sequences
+        # for i in range(len(src)):
+        #     src_text = [self.source_tokenizer.decode(x, skip_special_tokens=False) for x in src[i].tolist()]
+        #     tgt_text = [self.target_tokenizer.decode(x, skip_special_tokens=False) for x in tgt[i].tolist()]
+        #     # print(f"\nSample {i + 1}:")
+        #     # print(f"{len(src_text)} Source: {src_text}")
+        #     # print(f"{len(tgt_text)} Target: {tgt_text}")
         src_mask = (src != self.pad_token_id)
-        # logits = self.model(src, tgt, mask=src_mask)
-        loss = self.model(src, tgt, mask=src_mask)
 
-        # Add label smoothing
-        # loss = F.cross_entropy(
-        #     logits.permute(0, 2, 1),
-        #     tgt,
-        #     label_smoothing=self.config.model.label_smoothing
-        # )
+        tgt_mask = generate_tgt_mask(tgt, self.pad_token_id)
+        
+        loss = self.model(src, tgt, mask=src_mask, attn_mask=tgt_mask)
         
         self.log('train_loss', loss, prog_bar=True)
+        current_lr = self.trainer.optimizers[0].param_groups[0]['lr']
+        self.log('learning_rate', current_lr, prog_bar=True)
+        
+        # if self.global_step >= 1:
+        #     raise ValueError("Stopping at step 1 as requested for debugging")
+        
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -97,7 +130,7 @@ class ARTransformerBase(L.LightningModule):
         
 
 
-        loss = self.model.forward(src, tgt, mask=src_mask)
+        loss = self.model(src, tgt, mask=src_mask)
 
         # print("logits_shape: ", logits.shape)
 
