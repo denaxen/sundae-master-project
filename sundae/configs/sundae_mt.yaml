@@ -45,7 +45,7 @@ model:
     enable_checkpointing: true
     callbacks:
       - _target_: callbacks.TranslationSamplingCallback
-        sample_frequency: 20
+        sample_frequency: 5000
         nb_samples: ${sample.nb_samples} 
 
 loader:
