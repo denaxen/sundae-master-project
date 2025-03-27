@@ -8,6 +8,7 @@ data:
   de_tokenizer_path: "tokenizers/wmt_de_tokenizer"
   # de_tokenizer_path: "speedcell4/wmt14-deen-de-32k"
   # en_tokenizer_path: "speedcell4/wmt14-deen-en-32k"
+  bos_token: 0
   pad_token: 1
   reverse: false
   max_length: 128
@@ -18,34 +19,31 @@ data:
     num_workers: 4
 
 model:
-  type: "sundae-diffusion-mt"
+  type: "ar-mt-hf-transformer"
   embedding_dim: 512
   nb_layers: 6
   nb_heads: 8
-  downsampled_target_length: 64
-  target_length_prediction_hidden_dim: 128
   label_smoothing: 0.1
-  length_loss_weight: 1.0
   dropout: 0.1
   feedforward_dim: 2048
+  tie_token_emb: false
 
   min_lr: 1e-7
   peak_lr: 1e-4
   warmup_steps: 5000
 
 
-
   trainer:
     _target_: lightning.pytorch.Trainer
-    max_epochs: 15
+    max_epochs: 1
     log_every_n_steps: 1
-    val_check_interval: 10000
-    max_steps: 1000000
-    precision: "bf16"
+    val_check_interval: 1000
+    max_steps: 20000
+    precision: 32
     enable_checkpointing: true
     callbacks:
       - _target_: callbacks.TranslationSamplingCallback
-        sample_frequency: 20
+        sample_frequency: 1000
         nb_samples: ${sample.nb_samples} 
 
 loader:
@@ -62,11 +60,8 @@ optimizer:
 seed: 42
 mode: train
 compile: false
-config_optimizer_and_batch_automatically: false
 save_model: false
 save_model_path: "model.pt"
-
-unroll_steps: 3
 
 sample:
   temperature: 0.4

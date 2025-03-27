@@ -17,6 +17,9 @@ def get_module(config):
     elif model_type == "ar-mt-transformer":
         module_path = "ar_mt_transformer"
         class_name = "ARTransformerBase"
+    elif model_type == "ar-mt-hf-transformer":
+        module_path = "ar_mt_hf_transformer"
+        class_name = "ARTransformerHF"  
     else:
         raise ValueError(f"Unknown model type {model_type}. Supported types are 'diffusion' and 'autoregressive'.")
     

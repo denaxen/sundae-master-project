@@ -81,26 +81,28 @@ class ARTransformerBase(L.LightningModule):
         """
         src, tgt = batch['source'], batch['target']
         
-        # # Load tokenizers if not already loaded
-        # if not hasattr(self, 'source_tokenizer') or not hasattr(self, 'target_tokenizer'):
-        #     from transformers import AutoTokenizer
-        #     # Determine source/target languages based on reverse flag
-        #     source_lang = "de" if self.config.data.get("reverse", False) else "en"
-        #     target_lang = "en" if source_lang == "de" else "de"
+        # Load tokenizers if not already loaded
+        if not hasattr(self, 'source_tokenizer') or not hasattr(self, 'target_tokenizer'):
+            from transformers import AutoTokenizer
+            # Determine source/target languages based on reverse flag
+            source_lang = "de" if self.config.data.get("reverse", False) else "en"
+            target_lang = "en" if source_lang == "de" else "de"
             
-        #     source_tokenizer_path = self.config.data.de_tokenizer_path if source_lang == "de" else self.config.data.en_tokenizer_path
-        #     target_tokenizer_path = self.config.data.de_tokenizer_path if target_lang == "de" else self.config.data.en_tokenizer_path
+            source_tokenizer_path = self.config.data.de_tokenizer_path if source_lang == "de" else self.config.data.en_tokenizer_path
+            target_tokenizer_path = self.config.data.de_tokenizer_path if target_lang == "de" else self.config.data.en_tokenizer_path
             
-        #     self.source_tokenizer = AutoTokenizer.from_pretrained(source_tokenizer_path)
-        #     self.target_tokenizer = AutoTokenizer.from_pretrained(target_tokenizer_path)
+            self.source_tokenizer = AutoTokenizer.from_pretrained(source_tokenizer_path)
+            self.target_tokenizer = AutoTokenizer.from_pretrained(target_tokenizer_path)
         
-        # # Decode and print the source and target sequences
-        # for i in range(len(src)):
-        #     src_text = [self.source_tokenizer.decode(x, skip_special_tokens=False) for x in src[i].tolist()]
-        #     tgt_text = [self.target_tokenizer.decode(x, skip_special_tokens=False) for x in tgt[i].tolist()]
-        #     # print(f"\nSample {i + 1}:")
-        #     # print(f"{len(src_text)} Source: {src_text}")
-        #     # print(f"{len(tgt_text)} Target: {tgt_text}")
+        # Decode and print the source and target sequences
+        for i in range(len(src)):
+            src_text = [self.source_tokenizer.decode(x, skip_special_tokens=False) for x in src[i].tolist()]
+            tgt_text = [self.target_tokenizer.decode(x, skip_special_tokens=False) for x in tgt[i].tolist()]
+            print(f"\nSample {i + 1}:")
+            print(f"{len(src_text)} Source: {src_text}")
+            print(f"{len(tgt_text)} Target: {tgt_text}")
+            print(f"Source: {src[i]}")
+            print(f"Target: {tgt[i]}")
         src_mask = (src != self.pad_token_id)
 
         tgt_mask = generate_tgt_mask(tgt, self.pad_token_id)
@@ -111,8 +113,8 @@ class ARTransformerBase(L.LightningModule):
         current_lr = self.trainer.optimizers[0].param_groups[0]['lr']
         self.log('learning_rate', current_lr, prog_bar=True)
         
-        # if self.global_step >= 1:
-        #     raise ValueError("Stopping at step 1 as requested for debugging")
+        if self.global_step >= 1:
+            raise ValueError("Stopping at step 1 as requested for debugging")
         
         return loss
 
