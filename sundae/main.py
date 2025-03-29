@@ -58,7 +58,7 @@ def train(config):
 
     # Create lightning trainer from fields in the config
     trainer = hydra.utils.instantiate(
-        config.model.trainer, default_root_dir=os.getcwd(), strategy="ddp_find_unused_parameters_true", logger=loggers
+        config.model.trainer, default_root_dir=os.getcwd(), logger=loggers
     )
 
     trainer.fit(

@@ -42,14 +42,22 @@ model:
     _target_: lightning.pytorch.Trainer
     max_epochs: 15
     log_every_n_steps: 1
-    val_check_interval: 500
+    val_check_interval: 3000
     max_steps: 1000000
-    precision: "bf16"
+    precision: "bf16-mixed"
+    strategy: "ddp_find_unused_parameters_true"
     enable_checkpointing: true
     callbacks:
       - _target_: callbacks.TranslationSamplingCallback
-        sample_frequency: 500
+        sample_frequency: 3000
         nb_samples: ${sample.nb_samples} 
+      - _target_: lightning.pytorch.callbacks.ModelCheckpoint
+        dirpath: ${hydra:runtime.output_dir}/checkpoints
+        filename: "{epoch:02d}-{step:08d}"
+        save_last: true
+        save_top_k: 10
+        monitor: "step"
+        mode: "max"
 
 loader:
   batch_size: 256

@@ -107,9 +107,9 @@ class ARTransformerHF(L.LightningModule):
             ignore_index=self.pad_token_id,
         )
         
-        self.log('train_loss', loss, prog_bar=True)
+        self.log('train_loss', loss, prog_bar=True, sync_dist=True)
         current_lr = self.trainer.optimizers[0].param_groups[0]['lr']
-        self.log('learning_rate', current_lr, prog_bar=True)
+        self.log('learning_rate', current_lr, prog_bar=True, sync_dist=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -135,7 +135,7 @@ class ARTransformerHF(L.LightningModule):
             labels.reshape(-1),
             ignore_index=self.pad_token_id,
         )
-        self.log('val_loss', loss, prog_bar=True)
+        self.log('val_loss', loss, prog_bar=True, sync_dist=True)
         out = {"loss": loss}
         
         # Only sample translations from the first batch to save time.
@@ -174,10 +174,11 @@ class ARTransformerHF(L.LightningModule):
             # NLTK BLEU requires tokenized sentences.
             tokenized_generated = [gen.split() for gen in all_generated]
             tokenized_references = [[ref.split()] for ref in all_references]
-            nltk_bleu = nltk.translate.bleu_score.corpus_bleu(tokenized_references, tokenized_generated) * 100
+            smoothing = nltk.translate.bleu_score.SmoothingFunction()
+            nltk_bleu = nltk.translate.bleu_score.corpus_bleu(tokenized_references, tokenized_generated, smoothing_function=smoothing.method1) * 100
             
-            self.log('val_sacrebleu', sacrebleu_score.score)
-            self.log('val_nltk_bleu', nltk_bleu)
+            self.log('val_sacrebleu', sacrebleu_score.score, sync_dist=True)
+            self.log('val_nltk_bleu', nltk_bleu, sync_dist=True)
             print(f"Validation SacreBLEU: {sacrebleu_score.score:.2f}, NLTK BLEU: {nltk_bleu:.2f}")
         
         self.my_val_outputs.clear()
@@ -196,11 +197,10 @@ class ARTransformerHF(L.LightningModule):
             attention_mask=src_mask,
             decoder_start_token_id=self.bos_token,
             max_length=self.config.data.target_sequence_length,
-            num_return_sequences=1,
-            do_sample=True,
+            do_sample=False,
             num_beams=4,
-            early_stopping=True,
-            temperature=self.config.get('sample', {}).get('temperature', 1.0)
+            length_penalty=self.config.sample.length_penalty,
+            early_stopping=True
         )
         return generated
 
