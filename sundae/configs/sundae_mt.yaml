@@ -4,10 +4,11 @@ data:
   source_sequence_length: 128
   target_sequence_length: 128
   vocabulary_size: 32001
-  en_tokenizer_path: "tokenizers/wmt_en_tokenizer"
-  de_tokenizer_path: "tokenizers/wmt_de_tokenizer"
+  # en_tokenizer_path: "tokenizers/wmt_en_tokenizer"
+  # de_tokenizer_path: "tokenizers/wmt_de_tokenizer"
   # de_tokenizer_path: "speedcell4/wmt14-deen-de-32k"
   # en_tokenizer_path: "speedcell4/wmt14-deen-en-32k"
+  shared_tokenizer_path: "tokenizers/wmt14-deen-shared-40k"
   pad_token: 1
   bos_token: 0
   eos_token: 2
@@ -41,13 +42,13 @@ model:
     _target_: lightning.pytorch.Trainer
     max_epochs: 15
     log_every_n_steps: 1
-    val_check_interval: 2000
+    val_check_interval: 50
     max_steps: 1000000
     precision: "bf16"
     enable_checkpointing: true
     callbacks:
       - _target_: callbacks.TranslationSamplingCallback
-        sample_frequency: 2000
+        sample_frequency: 50
         nb_samples: ${sample.nb_samples} 
 
 loader:
@@ -77,7 +78,7 @@ sample:
   steps: 500
   min_steps: 10
   nb_samples: 4
-  trim_eos: true
+  trim_eos: false
 
 checkpointing:
   resume_from_ckpt: false

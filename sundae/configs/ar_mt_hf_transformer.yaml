@@ -4,10 +4,11 @@ data:
   source_sequence_length: 128
   target_sequence_length: 128
   vocabulary_size: 32001
-  en_tokenizer_path: "tokenizers/wmt_en_tokenizer"
-  de_tokenizer_path: "tokenizers/wmt_de_tokenizer"
+  # en_tokenizer_path: "tokenizers/wmt_en_tokenizer"
+  # de_tokenizer_path: "tokenizers/wmt_de_tokenizer"
   # de_tokenizer_path: "speedcell4/wmt14-deen-de-32k"
   # en_tokenizer_path: "speedcell4/wmt14-deen-en-32k"
+  shared_tokenizer_path: "tokenizers/wmt14-deen-shared-40k"
   bos_token: 0
   pad_token: 1
   reverse: false

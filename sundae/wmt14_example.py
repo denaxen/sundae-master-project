@@ -90,14 +90,10 @@ def get_wmt14_ende_data(splits: List[str] = ["train", "validation", "test"],
 if __name__ == "__main__":
     from transformers import AutoTokenizer
 
-    en_tokenizer = AutoTokenizer.from_pretrained("tokenizers/wmt_en_tokenizer")
-    de_tokenizer = AutoTokenizer.from_pretrained("tokenizers/wmt_de_tokenizer")
-    print("Vocab size:", en_tokenizer.vocab_size)
-    print("Special tokens:", en_tokenizer.all_special_tokens)
-    print("Special tokens mapping:", en_tokenizer.special_tokens_map)
-    print("Vocab size:", de_tokenizer.vocab_size)
-    print("Special tokens:", de_tokenizer.all_special_tokens)
-    print("Special tokens mapping:", de_tokenizer.special_tokens_map)
+    shared_tokenizer = AutoTokenizer.from_pretrained("tokenizers/wmt14-deen-shared-40k")
+    print("Vocab size:", shared_tokenizer.vocab_size)
+    print("Special tokens:", shared_tokenizer.all_special_tokens)
+    print("Special tokens mapping:", shared_tokenizer.special_tokens_map)
 
     data = get_wmt14_ende_data(["train", "validation", "test"], max_length=128, cache_dir="data/wmt14")
     print(data)
@@ -113,5 +109,5 @@ if __name__ == "__main__":
         print(f"Target ({validation_data[i]['target_lang']}): {validation_data[i]['target']}")
         print()
 
-    print(en_tokenizer.encode(validation_data[0]["source"]))
-    print(de_tokenizer.encode(validation_data[0]["target"]))
+    print(shared_tokenizer.encode(validation_data[0]["source"]))
+    print(shared_tokenizer.encode(validation_data[0]["target"]))

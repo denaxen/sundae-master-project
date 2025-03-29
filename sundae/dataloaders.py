@@ -2,22 +2,21 @@ from torch.utils.data import DataLoader
 from data import get_text8
 from wmt14_example import get_wmt14_ende_data
 from transformers import AutoTokenizer
-from pathlib import Path
-import os
 import hashlib
+import os
 import datasets
 
-def tokenize_wmt_example(example, en_tokenizer, de_tokenizer, add_special_tokens=True, max_length=None):
+def tokenize_wmt_example(example, shared_tokenizer, add_special_tokens=True, max_length=None):
     # Tokenize the source and target fields.
     # (Assumes that the source field contains the English text and target the German text, by default.)
-    example["source"] = en_tokenizer.encode(
+    example["source"] = shared_tokenizer.encode(
         example["source"], 
         add_special_tokens=add_special_tokens,
         padding="max_length" if max_length else None,
         max_length=max_length,
         truncation=True if max_length else None
     )
-    example["target"] = de_tokenizer.encode(
+    example["target"] = shared_tokenizer.encode(
         example["target"], 
         add_special_tokens=add_special_tokens,
         padding="max_length" if max_length else None,
@@ -79,9 +78,7 @@ def get_dataloaders(config):
                 reverse=config.data.get("reverse", False),
                 cache_dir=config.data.root
             )
-            # Load tokenizers; assume paths are provided in config.
-            en_tokenizer = AutoTokenizer.from_pretrained(config.data.en_tokenizer_path)
-            de_tokenizer = AutoTokenizer.from_pretrained(config.data.de_tokenizer_path)
+            shared_tokenizer = AutoTokenizer.from_pretrained(config.data.shared_tokenizer_path)
             
             # Apply tokenization to each example in train and validation splits.
             for split in ["train", "test"]:
@@ -90,8 +87,7 @@ def get_dataloaders(config):
                 data[split] = data[split].map(
                     lambda x: tokenize_wmt_example(
                         x, 
-                        en_tokenizer, 
-                        de_tokenizer, 
+                        shared_tokenizer, 
                         max_length=config.data.max_length
                     ),
                     remove_columns=["translation", "source_lang", "target_lang"],

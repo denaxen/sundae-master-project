@@ -247,11 +247,10 @@ class SundaeMTModule(L.LightningModule):
 
     def on_validation_epoch_end(self):
         # Load the tokenizer if not already loaded
-        target_lang = "de" if not self.config.data.get("reverse", False) else "en"
-        target_tokenizer_path = self.config.data.de_tokenizer_path if target_lang == "de" else self.config.data.en_tokenizer_path
-        if not hasattr(self, 'target_tokenizer'):
+        tokenizer_path = self.config.data.shared_tokenizer_path
+        if not hasattr(self, 'tokenizer'):
             from transformers import AutoTokenizer
-            self.target_tokenizer = AutoTokenizer.from_pretrained(target_tokenizer_path)
+            self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
         
         all_generated = []
         all_references = []
@@ -259,8 +258,8 @@ class SundaeMTModule(L.LightningModule):
         for output in self.my_val_outputs:
             if "generated_tokens" in output:
                 for gen_tokens, ref_tokens in zip(output["generated_tokens"], output["reference_tokens"]):
-                    gen_text = self.target_tokenizer.decode(gen_tokens.tolist(), skip_special_tokens=True)
-                    ref_text = self.target_tokenizer.decode(ref_tokens.tolist(), skip_special_tokens=True)
+                    gen_text = self.tokenizer.decode(gen_tokens.tolist(), skip_special_tokens=True)
+                    ref_text = self.tokenizer.decode(ref_tokens.tolist(), skip_special_tokens=True)
                     all_generated.append(gen_text)
                     all_references.append(ref_text)
         

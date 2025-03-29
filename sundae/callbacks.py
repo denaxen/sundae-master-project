@@ -56,28 +56,9 @@ class TranslationSamplingCallback(L.Callback):
             val_dataloader = trainer.val_dataloaders
             val_dataset = val_dataloader.dataset
             
-            # Get the appropriate tokenizers
-            source_lang = "en" if not pl_module.config.data.get("reverse", False) else "de"
-            target_lang = "de" if not pl_module.config.data.get("reverse", False) else "en"
-
-            # Use source_tokenizer for source text
-            source_tokenizer_path = pl_module.config.data.en_tokenizer_path if source_lang == "en" else pl_module.config.data.de_tokenizer_path
-            source_tokenizer = AutoTokenizer.from_pretrained(source_tokenizer_path)
-
-            # Check if we have tokenizers stored on the pl_module
-            if not hasattr(pl_module, 'target_tokenizer'):
-                # If not available on the module, try to get it from config
-                if hasattr(trainer.datamodule, 'target_tokenizer'):
-                    target_tokenizer = trainer.datamodule.target_tokenizer
-                else:
-                    # As a fallback, load the tokenizer directly
-                    target_tokenizer_path = pl_module.config.data.de_tokenizer_path if target_lang == "de" else pl_module.config.data.en_tokenizer_path
-                    target_tokenizer = AutoTokenizer.from_pretrained(target_tokenizer_path)
-                
-                # Store it on the pl_module for future use
-                pl_module.target_tokenizer = target_tokenizer
-            else:
-                target_tokenizer = pl_module.target_tokenizer
+            # Get the shared tokenizer
+            tokenizer_path = pl_module.config.data.shared_tokenizer_path
+            tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
             
             # Sample from validation set
             with torch.no_grad():
@@ -94,19 +75,17 @@ class TranslationSamplingCallback(L.Callback):
                     # Generate translation
                     translation = pl_module.sample_translation(src)
                     
-                    # Decode using tokenizer
-                    decoded_text = target_tokenizer.decode(translation[0].tolist(), skip_special_tokens=True)
+                    # Decode using shared tokenizer
+                    decoded_text = tokenizer.decode(translation[0].tolist(), skip_special_tokens=True)
                     
                     # Log the results
-                    source_text = source_tokenizer.decode(sample['source'].tolist(), skip_special_tokens=True)
-                    reference_text = target_tokenizer.decode(sample['target'].tolist(), skip_special_tokens=True)
+                    source_text = tokenizer.decode(sample['source'].tolist(), skip_special_tokens=True)
+                    reference_text = tokenizer.decode(sample['target'].tolist(), skip_special_tokens=True)
                     
                     logger.info(f"Source: {source_text}")
                     logger.info(f"Generated: {decoded_text}")
                     logger.info(f"Reference: {reference_text}")
-                    # logger.info(f"Source tokens: {sample['source']}")
                     logger.info(f"Generated tokens: {translation}")
-                    # logger.info(f"Reference tokens: {sample['target']}")
                     # Count non-pad tokens in target
                     pad_token_id = pl_module.config.data.get("pad_token", 1)
                     target_length = (sample['target'] != pad_token_id).sum().item()

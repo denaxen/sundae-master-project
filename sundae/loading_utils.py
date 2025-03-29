@@ -21,7 +21,7 @@ def get_module(config):
         module_path = "ar_mt_hf_transformer"
         class_name = "ARTransformerHF"  
     else:
-        raise ValueError(f"Unknown model type {model_type}. Supported types are 'diffusion' and 'autoregressive'.")
+        raise ValueError(f"Unknown model type {model_type}. Supported types are 'diffusion', 'autoregressive', 'diffusion-mt', 'ar-mt-transformer', and 'ar-mt-hf-transformer'.")
     
     try:
         module = importlib.import_module(module_path)
