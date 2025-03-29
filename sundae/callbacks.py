@@ -111,7 +111,8 @@ class TranslationSamplingCallback(L.Callback):
                     pad_token_id = pl_module.config.data.get("pad_token", 1)
                     target_length = (sample['target'] != pad_token_id).sum().item()
                     logger.info(f"Target length (excluding pad tokens): {target_length}")
-                    logger.info(f"Generated length: {len(translation[0])}")
+                    generated_length = (translation[0] != pad_token_id).sum().item()
+                    logger.info(f"Generated length (excluding pad tokens): {generated_length}")
                     logger.info("----")
             
             # Return to training mode if needed

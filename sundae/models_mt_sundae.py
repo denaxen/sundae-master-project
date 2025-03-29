@@ -215,7 +215,26 @@ class SundaeMTModule(L.LightningModule):
         gt_len_downsampled = torch.clamp((gt_len + 1) // 2, max=self.config.model.downsampled_target_length - 1)
         length_loss = F.cross_entropy(pred_length_logits, gt_len_downsampled)
         loss = token_loss + self.config.model.length_loss_weight * length_loss
-        self.log('val_loss', loss, prog_bar=True)
+        self.log('val_loss', loss, prog_bar=True, sync_dist=True)
+        self.log('val_token_loss', token_loss, prog_bar=True, sync_dist=True)
+        self.log('val_length_loss', length_loss, prog_bar=True, sync_dist=True)
+        
+        # Add length-related metrics (similar to training)
+        pred_len_class = pred_length_logits.argmax(dim=-1)
+        length_class_accuracy = (pred_len_class == gt_len_downsampled).float().mean()
+        self.log('val_length_class_accuracy', length_class_accuracy, prog_bar=True, sync_dist=True)
+        
+        pred_token_len = pred_len_class * 2  # upsampled approximate token length
+        mse_length_error = ((pred_token_len - gt_len) ** 2).float().mean()
+        rmse_length_error = torch.sqrt(mse_length_error)
+        self.log('val_rmse_length_error', rmse_length_error, prog_bar=True, sync_dist=True)
+        
+        mean_pred_len = pred_token_len.float().mean()
+        std_pred_len = pred_token_len.float().std()
+        mean_gt_len = gt_len.float().mean()
+        self.log('val_mean_pred_length', mean_pred_len, sync_dist=True)
+        self.log('val_std_pred_length', std_pred_len, sync_dist=True)
+        self.log('val_mean_gt_length', mean_gt_len, sync_dist=True)
         
         out = {"loss": loss}
         # Only sample from the first batch (to keep evaluation fast)
@@ -253,12 +272,18 @@ class SundaeMTModule(L.LightningModule):
             
             # Fix 2: For NLTK BLEU, we need to tokenize and structure references correctly
             tokenized_generated = [gen.split() for gen in all_generated]
-            # Each reference needs to be a list in a list - [[tokens1], [tokens2], ...]
             tokenized_references = [[ref.split()] for ref in all_references]
-            nltk_bleu = nltk.translate.bleu_score.corpus_bleu(tokenized_references, tokenized_generated) * 100
             
-            self.log('val_sacrebleu', sacrebleu_score.score)
-            self.log('val_nltk_bleu', nltk_bleu)
+            # Add smoothing function to handle zero counts
+            smoothing = nltk.translate.bleu_score.SmoothingFunction()
+            nltk_bleu = nltk.translate.bleu_score.corpus_bleu(
+                tokenized_references, 
+                tokenized_generated,
+                smoothing_function=smoothing.method1
+            ) * 100
+            
+            self.log('val_sacrebleu', sacrebleu_score.score, sync_dist=True)
+            self.log('val_nltk_bleu', nltk_bleu, sync_dist=True)
             logger.info(f"Validation SacreBLEU: {sacrebleu_score.score:.2f}, NLTK BLEU: {nltk_bleu:.2f}")
         
         self.my_val_outputs.clear()
