@@ -9,6 +9,8 @@ data:
   # de_tokenizer_path: "speedcell4/wmt14-deen-de-32k"
   # en_tokenizer_path: "speedcell4/wmt14-deen-en-32k"
   pad_token: 1
+  bos_token: 0
+  eos_token: 2
   reverse: false
   max_length: 128
 
@@ -75,6 +77,7 @@ sample:
   steps: 500
   min_steps: 10
   nb_samples: 4
+  trim_eos: true
 
 checkpointing:
   resume_from_ckpt: false

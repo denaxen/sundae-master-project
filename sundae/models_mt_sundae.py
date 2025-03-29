@@ -160,12 +160,57 @@ class SundaeMTModule(L.LightningModule):
         self.log('train_mean_gt_length', mean_gt_len)
         
         return loss
+
+    def sample_translation(self, src, min_steps=4):
+        """Generate translation for a given source batch."""
+        src_enc = self.encoder(src)
+        pred_length_logits = self.length_predictor(src_enc.mean(dim=1))
+        pred_len_class = pred_length_logits.argmax(dim=-1)
+        
+        length_emb = self.length_embed(pred_len_class)
+        length_emb = length_emb.unsqueeze(1)
+        src_enc_with_len = torch.cat([length_emb, src_enc], dim=1)
+        
+        batch_size = src.shape[0]
+        max_len = self.config.data.target_sequence_length
+        init_tgt = torch.randint(
+            self.config.data.vocabulary_size,
+            (batch_size, max_len),
+            device=src.device
+        )
+        predicted_len_upsampled = pred_len_class * 2
+        for i in range(batch_size):
+            length_i = predicted_len_upsampled[i]
+            if length_i < max_len:
+                init_tgt[i, length_i:] = self.config.data.pad_token
+
+        for step_idx in range(self.config.sample.steps):
+            logits = self.decoder(init_tgt, context=src_enc_with_len)
+            sample = Categorical(logits=logits / self.config.sample.temperature).sample()
+            init_tgt = sample
+        logger.info(f"Stopped sampling after {step_idx+1} steps.")
+        
+        if self.config.sample.get('trim_eos', False):  # Only trim if config flag is True
+            # Find first EOS token in each sequence and trim
+            eos_positions = (init_tgt == self.config.data.eos_token).nonzero()
+            for i in range(batch_size):
+                # Get positions where EOS appears in sequence i
+                seq_eos = eos_positions[eos_positions[:, 0] == i]
+                if len(seq_eos) > 0:
+                    # Take first EOS position and trim sequence
+                    first_eos = seq_eos[0, 1]
+                    init_tgt[i, first_eos+1:] = self.config.data.pad_token
+        
+        return init_tgt
     
     def validation_step(self, batch, batch_idx):
         src, tgt = batch['source'], batch['target']
         logits, pred_length_logits = self.forward(src, tgt)
         repeated_tgt = tgt.repeat(self.config.unroll_steps, 1)
-        token_loss = F.cross_entropy(logits.permute(0, 2, 1), repeated_tgt, label_smoothing=self.config.model.label_smoothing)
+        token_loss = F.cross_entropy(logits.permute(0, 2, 1),
+            repeated_tgt,
+            label_smoothing=self.config.model.label_smoothing,
+            ignore_index=self.config.data.pad_token)
         gt_len = (tgt != self.config.data.pad_token).sum(dim=1)
         gt_len_downsampled = torch.clamp((gt_len + 1) // 2, max=self.config.model.downsampled_target_length - 1)
         length_loss = F.cross_entropy(pred_length_logits, gt_len_downsampled)
@@ -217,37 +262,6 @@ class SundaeMTModule(L.LightningModule):
             logger.info(f"Validation SacreBLEU: {sacrebleu_score.score:.2f}, NLTK BLEU: {nltk_bleu:.2f}")
         
         self.my_val_outputs.clear()
-
-    
-    def sample_translation(self, src, min_steps=4):
-        """Generate translation for a given source batch."""
-        src_enc = self.encoder(src)
-        pred_length_logits = self.length_predictor(src_enc.mean(dim=1))
-        pred_len_class = pred_length_logits.argmax(dim=-1)
-        
-        length_emb = self.length_embed(pred_len_class)
-        length_emb = length_emb.unsqueeze(1)
-        src_enc_with_len = torch.cat([length_emb, src_enc], dim=1)
-        
-        batch_size = src.shape[0]
-        max_len = self.config.data.target_sequence_length
-        init_tgt = torch.randint(
-            self.config.data.vocabulary_size,
-            (batch_size, max_len),
-            device=src.device
-        )
-        predicted_len_upsampled = pred_len_class * 2
-        for i in range(batch_size):
-            length_i = predicted_len_upsampled[i]
-            if length_i < max_len:
-                init_tgt[i, length_i:] = self.config.data.pad_token
-
-        for step_idx in range(self.config.sample.steps):
-            logits = self.decoder(init_tgt, context=src_enc_with_len)
-            sample = Categorical(logits=logits / self.config.sample.temperature).sample()
-            init_tgt = sample
-        logger.info(f"Stopped sampling after {step_idx+1} steps.")
-        return init_tgt
     
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(),

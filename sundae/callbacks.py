@@ -104,9 +104,14 @@ class TranslationSamplingCallback(L.Callback):
                     logger.info(f"Source: {source_text}")
                     logger.info(f"Generated: {decoded_text}")
                     logger.info(f"Reference: {reference_text}")
-                    logger.info(f"Source tokens: {sample['source']}")
+                    # logger.info(f"Source tokens: {sample['source']}")
                     logger.info(f"Generated tokens: {translation}")
-                    logger.info(f"Reference tokens: {sample['target']}")
+                    # logger.info(f"Reference tokens: {sample['target']}")
+                    # Count non-pad tokens in target
+                    pad_token_id = pl_module.config.data.get("pad_token", 1)
+                    target_length = (sample['target'] != pad_token_id).sum().item()
+                    logger.info(f"Target length (excluding pad tokens): {target_length}")
+                    logger.info(f"Generated length: {len(translation[0])}")
                     logger.info("----")
             
             # Return to training mode if needed
