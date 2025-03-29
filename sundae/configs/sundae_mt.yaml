@@ -45,7 +45,7 @@ model:
     enable_checkpointing: true
     callbacks:
       - _target_: callbacks.TranslationSamplingCallback
-        sample_frequency: 5000
+        sample_frequency: 20
         nb_samples: ${sample.nb_samples} 
 
 loader:
@@ -69,10 +69,10 @@ save_model_path: "model.pt"
 unroll_steps: 3
 
 sample:
-  temperature: 0.4
+  temperature: 0.8
   sample_proportion: 0.3
   sample_frequency: 1
-  steps: 16
+  steps: 500
   min_steps: 10
   nb_samples: 4
 

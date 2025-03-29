@@ -103,8 +103,10 @@ class TranslationSamplingCallback(L.Callback):
                     
                     logger.info(f"Source: {source_text}")
                     logger.info(f"Generated: {decoded_text}")
-                    logger.info(f"Generated tokens: {translation}")
                     logger.info(f"Reference: {reference_text}")
+                    logger.info(f"Source tokens: {sample['source']}")
+                    logger.info(f"Generated tokens: {translation}")
+                    logger.info(f"Reference tokens: {sample['target']}")
                     logger.info("----")
             
             # Return to training mode if needed

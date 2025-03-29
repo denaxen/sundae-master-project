@@ -125,7 +125,10 @@ class SundaeMTModule(L.LightningModule):
         logits, pred_length_logits = self.forward(src, tgt)
         
         repeated_tgt = tgt.repeat(self.config.unroll_steps, 1)
-        token_loss = F.cross_entropy(logits.permute(0, 2, 1), repeated_tgt, label_smoothing=self.config.model.label_smoothing)
+        token_loss = F.cross_entropy(logits.permute(0, 2, 1),
+            repeated_tgt,
+            label_smoothing=self.config.model.label_smoothing,
+            ignore_index=self.config.data.pad_token)
         
         gt_len = (tgt != self.config.data.pad_token).sum(dim=1)
         gt_len_downsampled = torch.clamp((gt_len + 1) // 2, max=self.config.model.downsampled_target_length - 1)
