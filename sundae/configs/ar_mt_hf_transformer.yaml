@@ -40,6 +40,7 @@ model:
     max_steps: 100000
     precision: "bf16-mixed"
     strategy: "ddp"
+    gradient_clip_val: 1.0
     enable_checkpointing: true
     callbacks:
       - _target_: callbacks.TranslationSamplingCallback
@@ -61,7 +62,7 @@ loader:
 optimizer:
   betas: [0.9, 0.98]
   eps: 1e-9
-  weight_decay: 0.1
+  # weight_decay: 0.1
   
 seed: 42
 mode: train
