@@ -209,44 +209,37 @@ class ARTransformerHF(L.LightningModule):
         Set up the optimizer and a learning rate scheduler with a warmup
         and cosine decay schedule.
         """
+        d_model = self.config.model.embedding_dim
+        warmup_steps = self.config.model.warmup_steps
+        base_lr = d_model ** -0.5
         optimizer = torch.optim.Adam(
             self.parameters(),
-            lr=self.config.model.peak_lr,
+            lr=base_lr,
             betas=self.config.optimizer.betas,
             eps=self.config.optimizer.eps,
-            weight_decay=self.config.optimizer.weight_decay
+            # weight_decay=self.config.optimizer.weight_decay
         )
         
         scheduler = {
             'scheduler': torch.optim.lr_scheduler.LambdaLR(
                 optimizer,
-                lambda step: self._get_lr_multiplier(step)
+                lambda step: self._get_inverse_sqrt_lr_multiplier(step)
             ),
             'interval': 'step',
             'frequency': 1
         }
         return [optimizer], [scheduler]
 
-    def _get_lr_multiplier(self, step):
+    def _get_inverse_sqrt_lr_multiplier(self, step: int) -> float:
         """
-        Custom learning rate schedule:
-        - Warmup phase: linear increase from min_lr to peak_lr.
-        - Cosine decay phase: decay from peak_lr to final_lr.
+        Computes the multiplier for the learning rate using the inverse square root schedule.
+        
+        The multiplier is:
+            min(step^(-0.5), step * warmup_steps^(-1.5))
+            
+        We ensure step is at least 1 to avoid division by zero.
         """
         warmup_steps = self.config.model.warmup_steps
-        max_steps = self.config.model.trainer.max_steps
-        min_lr = self.config.model.min_lr
-        peak_lr = self.config.model.peak_lr
-        final_lr = self.config.optimizer.learning_rate
-        
-        min_multiplier = min_lr / peak_lr
-        peak_multiplier = 1.0
-        final_multiplier = final_lr / peak_lr
-        
-        if step < warmup_steps:
-            return min_multiplier + (peak_multiplier - min_multiplier) * (step / warmup_steps)
-        
-        progress = (step - warmup_steps) / (max_steps - warmup_steps)
-        progress = min(max(progress, 0.0), 1.0)
-        cosine_decay = 0.5 * (1 + math.cos(math.pi * progress))
-        return final_multiplier + (peak_multiplier - final_multiplier) * cosine_decay
+        if step < 1:
+            step = 1
+        return min(step ** (-0.5), step * (warmup_steps ** (-1.5)))
