@@ -27,10 +27,8 @@ model:
   label_smoothing: 0.1
   dropout: 0.1
   feedforward_dim: 2048
-  tie_token_emb: false
+  tie_token_emb: true
 
-  min_lr: 1e-7
-  peak_lr: 1e-4
   warmup_steps: 4000
 
 
@@ -38,14 +36,14 @@ model:
     _target_: lightning.pytorch.Trainer
     max_epochs: 2
     log_every_n_steps: 1
-    val_check_interval: 3000
+    val_check_interval: 500
     max_steps: 100000
     precision: "bf16-mixed"
     strategy: "ddp"
     enable_checkpointing: true
     callbacks:
       - _target_: callbacks.TranslationSamplingCallback
-        sample_frequency: 3000
+        sample_frequency: 500
         nb_samples: ${sample.nb_samples} 
       - _target_: lightning.pytorch.callbacks.ModelCheckpoint
         dirpath: ${hydra:runtime.output_dir}/checkpoints
@@ -61,7 +59,6 @@ loader:
   num_workers: 4
 
 optimizer:
-  learning_rate: 1e-5
   betas: [0.9, 0.98]
   eps: 1e-9
   weight_decay: 0.1
@@ -74,7 +71,7 @@ save_model_path: "model.pt"
 
 sample:
   length_penalty: 0.6
-  nb_samples: 1
+  nb_samples: 4
 
 checkpointing:
   resume_from_ckpt: false

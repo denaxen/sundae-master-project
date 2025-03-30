@@ -65,15 +65,10 @@ class ARTransformerHF(L.LightningModule):
             tie_word_embeddings=config.model.tie_token_emb,
         )
         
-        # Initialize the model from the config.
         self.model = BartForConditionalGeneration(hf_config)
         
-        # If tying embeddings, ensure weights are shared.
         if config.model.tie_token_emb:
             self.model.tie_weights()
-
-        # Save peak LR for the optimizer.
-        self.lr = config.optimizer.learning_rate
 
     def training_step(self, batch, batch_idx):
         """
@@ -136,6 +131,8 @@ class ARTransformerHF(L.LightningModule):
             ignore_index=self.pad_token_id,
         )
         self.log('val_loss', loss, prog_bar=True, sync_dist=True)
+        val_perplexity = torch.exp(loss)
+        self.log('val_perplexity', val_perplexity, prog_bar=True, sync_dist=True)
         out = {"loss": loss}
         
         # Only sample translations from the first batch to save time.
