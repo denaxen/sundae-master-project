@@ -16,6 +16,7 @@ def load_wmt14_ende(split: str = "train", cache_dir: str = None) -> datasets.Dat
     """
     # WMT14 is available in the datasets library
     dataset = load_dataset("wmt14", "de-en", split=split, cache_dir=cache_dir)
+    dataset = dataset.shuffle(seed=42)
     
     # The dataset has 'translation' column with 'en' and 'de' subfields
     return dataset
