@@ -107,7 +107,7 @@ def get_dataloaders(config):
             data["train"],
             batch_size=config.data.loader.batch_size,
             num_workers=config.loader.num_workers,
-            shuffle=True,
+            shuffle=False,
             pin_memory=True,
         )
         eval_loader = DataLoader(
