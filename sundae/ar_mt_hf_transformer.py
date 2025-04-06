@@ -254,4 +254,4 @@ class ARTransformerHF(L.LightningModule):
         if step < 1:
             step = 1
         # return min(step ** (-0.5), step * (warmup_steps ** (-1.5)))
-        return warmup_steps ** (-1.5)
+        return 0.0002
