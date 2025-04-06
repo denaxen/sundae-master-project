@@ -7,7 +7,7 @@ import torch
 from lightning.pytorch.loggers import TensorBoardLogger
 from loguru import logger
 from omegaconf import OmegaConf
-
+import time
 from dataloaders import get_dataloaders
 from loading_utils import get_module
 from utils.other_utils import (
@@ -22,6 +22,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 def train(config):
+    time.sleep(600)
     logger.info("Starting training")
 
     if config.get("wandb", None):
