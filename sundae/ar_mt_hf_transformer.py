@@ -107,6 +107,20 @@ class ARTransformerHF(L.LightningModule):
         self.log('learning_rate', current_lr, prog_bar=True, sync_dist=True)
         return loss
 
+    def on_before_optimizer_step(self, optimizer):
+        # Compute gradient norms for encoder parameters
+        encoder_params = list(self.model.model.encoder.parameters())
+        encoder_grad_norms = [p.grad.norm(2) for p in encoder_params if p.grad is not None]
+        encoder_norm = torch.stack(encoder_grad_norms).norm(2) if encoder_grad_norms else torch.tensor(0.0)
+
+        # Compute gradient norms for decoder parameters
+        decoder_params = list(self.model.model.decoder.parameters())
+        decoder_grad_norms = [p.grad.norm(2) for p in decoder_params if p.grad is not None]
+        decoder_norm = torch.stack(decoder_grad_norms).norm(2) if decoder_grad_norms else torch.tensor(0.0)
+
+        self.log("encoder_grad_norm", encoder_norm, on_step=True, prog_bar=True)
+        self.log("decoder_grad_norm", decoder_norm, on_step=True, prog_bar=True)
+
     def validation_step(self, batch, batch_idx):
         """
         Validation step. Similar to training but without label smoothing.
