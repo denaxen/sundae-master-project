@@ -37,19 +37,19 @@ model:
     accelerator: cuda
     num_nodes: 1
     devices: 1
-    gradient_clip_val: 1.0
+    gradient_clip_val: 0.5
     benchmark: true
-    max_epochs: 1
+    max_epochs: 5
     log_every_n_steps: 1
-    val_check_interval: 500
-    max_steps: 100000
+    val_check_interval: 20000
+    # max_steps: 100000
     precision: "bf16-mixed"
-    strategy: "ddp"
+    # strategy: "ddp"
     # gradient_clip_val: 0.5
     enable_checkpointing: true
     callbacks:
       - _target_: callbacks.TranslationSamplingCallback
-        sample_frequency: 500
+        sample_frequency: 20000
         nb_samples: ${sample.nb_samples} 
       - _target_: lightning.pytorch.callbacks.ModelCheckpoint
         dirpath: ${hydra:runtime.output_dir}/checkpoints
