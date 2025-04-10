@@ -43,7 +43,7 @@ model:
     log_every_n_steps: 1
     val_check_interval: 20000
     # max_steps: 100000
-    precision: "bf16-mixed"
+    precision: "32-true"
     # strategy: "ddp"
     # gradient_clip_val: 0.5
     enable_checkpointing: true
