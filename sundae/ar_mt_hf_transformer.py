@@ -129,7 +129,7 @@ class ARTransformerHF(L.LightningModule):
     def validation_step(self, batch, batch_idx):
         """
         Validation step. Similar to training but without label smoothing.
-        Also generates sample translations from the first batch.
+        Also generates sample translations using beam search for BLEU calculation.
         """
         src, tgt = batch['source'], batch['target']
         src_mask = (src != self.pad_token_id).long()
@@ -154,17 +154,24 @@ class ARTransformerHF(L.LightningModule):
         self.log('val_perplexity', val_perplexity, prog_bar=True, sync_dist=True)
         out = {"loss": loss}
         
-        # Only sample translations from the first batch to save time.
-        if batch_idx == 0:
-            generated_tokens = self.sample_translation(src)
-            out["generated_tokens"] = generated_tokens
-            out["reference_tokens"] = tgt
+        # Generate translations for all batches to calculate BLEU properly
+        # Use beam search with parameters from config for BLEU calculation
+        generated_tokens = self.sample_translation(
+            src, 
+            num_beams=self.config.sample.num_beams, 
+            do_sample=self.config.sample.do_sample,
+            length_penalty=self.config.sample.length_penalty
+        )
+        out["generated_tokens"] = generated_tokens
+        out["reference_tokens"] = tgt
+        
         self.my_val_outputs.append(out)
         return out
 
     def on_validation_epoch_start(self):
         """
-        Load and average weights from the last 10 checkpoints for evaluation.
+        Load and average weights from the last N checkpoints for evaluation.
+        N is controlled by config.checkpointing.num_checkpoints_to_average
         """
         # Save current model weights to restore after validation
         self.original_state_dict = {k: v.clone() for k, v in self.model.state_dict().items()}
@@ -179,11 +186,13 @@ class ARTransformerHF(L.LightningModule):
                     break
             
             if checkpoint_dir:
-                # Average model weights from last 10 checkpoints
-                avg_state_dict = self._average_checkpoints(checkpoint_dir, num_checkpoints=10)
+                # Get number of checkpoints to average from config
+                num_checkpoints = self.config.checkpointing.num_checkpoints_to_average
+                # Average model weights from last N checkpoints
+                avg_state_dict = self._average_checkpoints(checkpoint_dir, num_checkpoints=num_checkpoints)
                 if avg_state_dict:
                     self.model.load_state_dict(avg_state_dict)
-                    print(f"Successfully loaded averaged weights from checkpoints for evaluation")
+                    print(f"Successfully loaded averaged weights from {num_checkpoints} checkpoints for evaluation")
         except Exception as e:
             print(f"Error loading averaged checkpoints: {str(e)}")
             # If something goes wrong, make sure we're using the original weights
@@ -331,23 +340,38 @@ class ARTransformerHF(L.LightningModule):
             
         return avg_state_dict
 
-    def sample_translation(self, src, nb_samples=4):
+    def sample_translation(self, src, num_beams=None, do_sample=None, length_penalty=None):
         """
         Generate translations for a source batch using the model's generate method.
+        
+        Args:
+            src: Source token ids
+            num_beams: Number of beams for beam search (default: from config)
+            do_sample: Whether to use sampling (default: from config)
+            length_penalty: Length penalty for beam search (default: from config)
+            
+        Returns:
+            generated: Token ids of the generated translations
         """
         src_mask = (src != self.pad_token_id).long()
         batch_size = src.shape[0]
-        # (Optional) you can also prepend a bos token if needed.
-        start_tokens = torch.full((batch_size, 1), self.bos_token, dtype=torch.long, device=src.device)
+        
+        # Use defaults from config if not specified
+        if num_beams is None:
+            num_beams = self.config.sample.num_beams
+        if do_sample is None:
+            do_sample = self.config.sample.do_sample
+        if length_penalty is None:
+            length_penalty = self.config.sample.length_penalty
         
         generated = self.model.generate(
             input_ids=src,
             attention_mask=src_mask,
             decoder_start_token_id=self.bos_token,
             max_length=self.config.data.target_sequence_length,
-            do_sample=False,
-            num_beams=4,
-            length_penalty=self.config.sample.length_penalty,
+            do_sample=do_sample,
+            num_beams=num_beams,
+            length_penalty=length_penalty,
             early_stopping=True
         )
         return generated
