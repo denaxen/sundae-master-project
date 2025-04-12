@@ -41,7 +41,7 @@ model:
     benchmark: true
     max_epochs: 1
     log_every_n_steps: 1
-    val_check_interval: 20000
+    val_check_interval: 2000
     # max_steps: 100000
     precision: "32-true"
     # strategy: "ddp"
@@ -49,7 +49,7 @@ model:
     enable_checkpointing: true
     callbacks:
       - _target_: callbacks.TranslationSamplingCallback
-        sample_frequency: 20000
+        sample_frequency: 2000
         nb_samples: ${sample.nb_samples} 
       - _target_: lightning.pytorch.callbacks.ModelCheckpoint
         dirpath: ${hydra:runtime.output_dir}/checkpoints

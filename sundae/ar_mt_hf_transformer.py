@@ -6,6 +6,10 @@ import lightning as L
 from transformers import BartForConditionalGeneration, BartConfig, AutoTokenizer
 import sacrebleu
 import nltk
+import glob
+import os
+from pathlib import Path
+import re
 
 class ARTransformerHF(L.LightningModule):
     """
@@ -47,6 +51,7 @@ class ARTransformerHF(L.LightningModule):
         self.my_val_outputs = []  # For storing validation outputs
         self.pad_token_id = config.data.pad_token
         self.bos_token = config.data.bos_token
+        self.original_state_dict = None  # To store original weights for later restoration
         
         # Build a Bart configuration matching our Transformer base design.
         hf_config = BartConfig(
@@ -157,6 +162,34 @@ class ARTransformerHF(L.LightningModule):
         self.my_val_outputs.append(out)
         return out
 
+    def on_validation_epoch_start(self):
+        """
+        Load and average weights from the last 10 checkpoints for evaluation.
+        """
+        # Save current model weights to restore after validation
+        self.original_state_dict = {k: v.clone() for k, v in self.model.state_dict().items()}
+        
+        # Load and average checkpoints
+        try:
+            # Get the checkpoint directory from the ModelCheckpoint callback
+            checkpoint_dir = None
+            for callback in self.trainer.callbacks:
+                if isinstance(callback, L.pytorch.callbacks.ModelCheckpoint):
+                    checkpoint_dir = callback.dirpath
+                    break
+            
+            if checkpoint_dir:
+                # Average model weights from last 10 checkpoints
+                avg_state_dict = self._average_checkpoints(checkpoint_dir, num_checkpoints=10)
+                if avg_state_dict:
+                    self.model.load_state_dict(avg_state_dict)
+                    print(f"Successfully loaded averaged weights from checkpoints for evaluation")
+        except Exception as e:
+            print(f"Error loading averaged checkpoints: {str(e)}")
+            # If something goes wrong, make sure we're using the original weights
+            if self.original_state_dict:
+                self.model.load_state_dict(self.original_state_dict)
+
     def on_validation_epoch_end(self):
         """
         At the end of validation, decode the generated and reference tokens using
@@ -192,7 +225,111 @@ class ARTransformerHF(L.LightningModule):
             self.log('val_nltk_bleu', nltk_bleu, sync_dist=True)
             print(f"Validation SacreBLEU: {sacrebleu_score.score:.2f}, NLTK BLEU: {nltk_bleu:.2f}")
         
+        # Restore original weights to continue training
+        if self.original_state_dict:
+            self.model.load_state_dict(self.original_state_dict)
+            self.original_state_dict = None
+            
         self.my_val_outputs.clear()
+
+    def _average_checkpoints(self, checkpoint_dir, num_checkpoints=10):
+        """
+        Average weights from the last n checkpoints.
+        
+        Args:
+            checkpoint_dir (str): Directory where checkpoints are saved
+            num_checkpoints (int): Number of most recent checkpoints to average
+            
+        Returns:
+            dict: Averaged state dictionary or None if no checkpoints found
+        """
+        checkpoint_path = Path(checkpoint_dir)
+        if not checkpoint_path.exists():
+            print(f"Checkpoint directory {checkpoint_dir} does not exist")
+            return None
+            
+        # Find all checkpoint files, but skip 'last.ckpt'
+        checkpoint_files = [f for f in checkpoint_path.glob("*.ckpt") if f.name != "last.ckpt"]
+        
+        if not checkpoint_files:
+            print(f"No checkpoint files found in {checkpoint_dir}")
+            return None
+            
+        # Extract step numbers from filenames and sort by step (most recent first)
+        step_pattern = re.compile(r".*step-(\d+).*\.ckpt$")
+        
+        def get_step(filename):
+            match = step_pattern.match(str(filename))
+            if match:
+                return int(match.group(1))
+            # If no step in filename, try epoch-step format
+            epoch_step_pattern = re.compile(r".*epoch=(\d+)-step=(\d+).*\.ckpt$")
+            match = epoch_step_pattern.match(str(filename))
+            if match:
+                return int(match.group(2))
+            # For other patterns like "{epoch:02d}-{step:08d}"
+            epoch_step_alt_pattern = re.compile(r".*-(\d+)\.ckpt$")
+            match = epoch_step_alt_pattern.match(str(filename))
+            if match:
+                return int(match.group(1))
+            return 0
+            
+        checkpoint_files_with_steps = [(f, get_step(f)) for f in checkpoint_files]
+        sorted_checkpoints = sorted(checkpoint_files_with_steps, key=lambda x: x[1], reverse=True)
+        
+        # Take only the most recent n checkpoints
+        checkpoints_to_average = sorted_checkpoints[:num_checkpoints]
+        
+        if not checkpoints_to_average:
+            print("Could not find checkpoints with step information")
+            return None
+            
+        print(f"Averaging {len(checkpoints_to_average)} checkpoints:")
+        for ckpt, step in checkpoints_to_average:
+            print(f"  - {ckpt.name} (step {step})")
+            
+        # Load and average the models
+        avg_state_dict = {}
+        for i, (ckpt_file, _) in enumerate(checkpoints_to_average):
+            checkpoint = torch.load(ckpt_file, map_location=self.device)
+            state_dict = checkpoint['state_dict']
+            
+            # Get the model state dict and fix the key names
+            model_state_dict = {}
+            for k, v in state_dict.items():
+                # Handle three cases:
+                # 1. Keys starting with 'model.model.' need to be converted to 'model.'
+                # 2. Keys like 'model.final_logits_bias' need to be converted to just 'final_logits_bias'
+                # 3. Keys like 'model.lm_head.weight' need to be converted to just 'lm_head.weight'
+                if k.startswith('model.model.'):
+                    new_key = k.replace('model.model.', 'model.', 1)
+                    model_state_dict[new_key] = v
+                elif k.startswith('model.'):
+                    # For top-level model attributes, remove the 'model.' prefix entirely
+                    if k in ['model.final_logits_bias', 'model.lm_head.weight']:
+                        new_key = k.replace('model.', '', 1)
+                        model_state_dict[new_key] = v
+                    else:
+                        model_state_dict[k] = v
+            
+            if i == 0:
+                # Initialize with the first checkpoint
+                avg_state_dict = {k: v.clone() for k, v in model_state_dict.items()}
+            else:
+                # Add to the running average
+                for k, v in model_state_dict.items():
+                    if k in avg_state_dict:
+                        avg_state_dict[k] += v
+                    else:
+                        # Handle case where a checkpoint might have keys others don't
+                        avg_state_dict[k] = v.clone()
+                        
+        # Divide by the number of checkpoints to get the average
+        num_ckpts = len(checkpoints_to_average)
+        for k in avg_state_dict:
+            avg_state_dict[k] /= num_ckpts
+            
+        return avg_state_dict
 
     def sample_translation(self, src, nb_samples=4):
         """
