@@ -39,7 +39,7 @@ model:
     devices: 1
     gradient_clip_val: 0.5
     benchmark: true
-    max_epochs: 5
+    max_epochs: 1
     log_every_n_steps: 1
     val_check_interval: 20000
     # max_steps: 100000
