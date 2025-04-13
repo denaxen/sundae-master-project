@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as F
 from torch.optim import Adam
 import lightning as L
-from transformers import BartForConditionalGeneration, BartConfig, AutoTokenizer
+from transformers import EncoderDecoderModel, EncoderDecoderConfig, BertConfig, BertModel, AutoTokenizer
 import sacrebleu
 import nltk
 import glob
@@ -53,25 +53,38 @@ class ARTransformerHF(L.LightningModule):
         self.bos_token = config.data.bos_token
         self.original_state_dict = None  # To store original weights for later restoration
         
-        # Build a Bart configuration matching our Transformer base design.
-        hf_config = BartConfig(
+        # Define max position embeddings based on sequence lengths
+        max_position = max(config.data.source_sequence_length, config.data.target_sequence_length)
+        
+        encoder_config = BertConfig(
             vocab_size=config.data.vocabulary_size,
-            d_model=config.model.embedding_dim,
-            encoder_layers=config.model.nb_layers,
-            decoder_layers=config.model.nb_layers,
-            encoder_attention_heads=config.model.nb_heads,
-            decoder_attention_heads=config.model.nb_heads,
-            encoder_ffn_dim=config.model.feedforward_dim,
-            decoder_ffn_dim=config.model.feedforward_dim,
-            dropout=config.model.dropout,
-            attention_dropout=config.model.dropout,
-            # Use the maximum of source/target lengths for position embeddings
-            max_position_embeddings=max(config.data.source_sequence_length, config.data.target_sequence_length),
-            tie_word_embeddings=config.model.tie_token_emb,
+            hidden_size=config.model.embedding_dim,
+            num_hidden_layers=config.model.nb_layers,
+            num_attention_heads=config.model.nb_heads,
+            intermediate_size=config.model.feedforward_dim,
+            hidden_dropout_prob=config.model.dropout,
+            attention_probs_dropout_prob=config.model.dropout,
+            max_position_embeddings=max_position,
+            pad_token_id=config.data.pad_token,
         )
+
+        decoder_config = BertConfig(
+            vocab_size=config.data.vocabulary_size,
+            hidden_size=config.model.embedding_dim,
+            num_hidden_layers=config.model.nb_layers,
+            num_attention_heads=config.model.nb_heads,
+            intermediate_size=config.model.feedforward_dim,
+            hidden_dropout_prob=config.model.dropout,
+            attention_probs_dropout_prob=config.model.dropout,
+            max_position_embeddings=max_position,
+            pad_token_id=config.data.pad_token,
+            is_decoder=True,
+            add_cross_attention=True,
+        )
+
+        ed_config = EncoderDecoderConfig.from_encoder_decoder_configs(encoder_config, decoder_config)
         
-        self.model = BartForConditionalGeneration(hf_config)
-        
+        self.model = EncoderDecoderModel(ed_config)
         if config.model.tie_token_emb:
             self.model.tie_weights()
 
@@ -89,11 +102,15 @@ class ARTransformerHF(L.LightningModule):
         decoder_input_ids = tgt[:, :-1]
         labels = tgt[:, 1:]
         
+        # Create attention mask for decoder to mask padding tokens
+        decoder_attention_mask = (decoder_input_ids != self.pad_token_id).long()
+        
         # Forward pass
         outputs = self.model(
             input_ids=src,
             attention_mask=src_mask,
             decoder_input_ids=decoder_input_ids,
+            decoder_attention_mask=decoder_attention_mask,
             return_dict=True,
         )
         logits = outputs.logits  # shape: (B, T, vocab_size)
@@ -114,12 +131,12 @@ class ARTransformerHF(L.LightningModule):
 
     def on_before_optimizer_step(self, optimizer):
         # Compute gradient norms for encoder parameters
-        encoder_params = list(self.model.model.encoder.parameters())
+        encoder_params = list(self.model.encoder.parameters())
         encoder_grad_norms = [p.grad.norm(2) for p in encoder_params if p.grad is not None]
         encoder_norm = torch.stack(encoder_grad_norms).norm(2) if encoder_grad_norms else torch.tensor(0.0)
 
         # Compute gradient norms for decoder parameters
-        decoder_params = list(self.model.model.decoder.parameters())
+        decoder_params = list(self.model.decoder.parameters())
         decoder_grad_norms = [p.grad.norm(2) for p in decoder_params if p.grad is not None]
         decoder_norm = torch.stack(decoder_grad_norms).norm(2) if decoder_grad_norms else torch.tensor(0.0)
 
@@ -136,10 +153,15 @@ class ARTransformerHF(L.LightningModule):
         
         decoder_input_ids = tgt[:, :-1]
         labels = tgt[:, 1:]
+        
+        # Create attention mask for decoder to mask padding tokens
+        decoder_attention_mask = (decoder_input_ids != self.pad_token_id).long()
+        
         outputs = self.model(
             input_ids=src,
             attention_mask=src_mask,
             decoder_input_ids=decoder_input_ids,
+            decoder_attention_mask=decoder_attention_mask,
             return_dict=True,
         )
         logits = outputs.logits
