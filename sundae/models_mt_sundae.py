@@ -117,7 +117,6 @@ class SundaeMTModule(L.LightningModule):
             current_tgt = Categorical(logits=logits).sample().detach()
             all_logits.append(logits)
         
-        # final_logits = torch.cat(all_logits, dim=0)
         return all_logits, pred_length_logits
     
     def training_step(self, batch, batch_idx):
@@ -129,8 +128,7 @@ class SundaeMTModule(L.LightningModule):
             step_loss = F.cross_entropy(
                 step_logits.permute(0, 2, 1),  # (batch, vocab, seq)
                 tgt,                           # shape (batch, seq)
-                label_smoothing=self.config.model.label_smoothing,
-                ignore_index=self.config.data.pad_token
+                label_smoothing=self.config.model.label_smoothing
             )
             token_loss_sum += step_loss
         token_loss = token_loss_sum / len(logits_list)
@@ -158,10 +156,8 @@ class SundaeMTModule(L.LightningModule):
         self.log('train_rmse_length_error', rmse_length_error, prog_bar=True)
         
         mean_pred_len = pred_token_len.float().mean()
-        std_pred_len = pred_token_len.float().std()
         mean_gt_len = gt_len.float().mean()
         self.log('train_mean_pred_length', mean_pred_len)
-        self.log('train_std_pred_length', std_pred_len)
         self.log('train_mean_gt_length', mean_gt_len)
         
         return loss
@@ -217,8 +213,7 @@ class SundaeMTModule(L.LightningModule):
             step_loss = F.cross_entropy(
                 step_logits.permute(0, 2, 1),  # (batch, vocab, seq)
                 tgt,                           # shape (batch, seq)
-                label_smoothing=self.config.model.label_smoothing,
-                ignore_index=self.config.data.pad_token
+                label_smoothing=self.config.model.label_smoothing
             )
             token_loss_sum += step_loss
         token_loss = token_loss_sum / len(logits_list)
@@ -241,10 +236,8 @@ class SundaeMTModule(L.LightningModule):
         self.log('val_rmse_length_error', rmse_length_error, prog_bar=True, sync_dist=True)
         
         mean_pred_len = pred_token_len.float().mean()
-        std_pred_len = pred_token_len.float().std()
         mean_gt_len = gt_len.float().mean()
         self.log('val_mean_pred_length', mean_pred_len, sync_dist=True)
-        self.log('val_std_pred_length', std_pred_len, sync_dist=True)
         self.log('val_mean_gt_length', mean_gt_len, sync_dist=True)
         
         out = {"loss": loss}
