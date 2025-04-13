@@ -154,6 +154,67 @@ class SundaeModel(L.LightningModule):
             
         return total_loss
 
+    def sample_translation(self, src, min_steps=4):
+        """Generate translation for a given source batch.
+        
+        This function works similarly to generate() but follows the implementation style
+        from the original models_mt_sundae.py.
+        
+        Args:
+            src (Tensor): Source token IDs, shape (batch_size, src_seq_len).
+            min_steps (int): Minimum number of refinement iterations.
+            
+        Returns:
+            Tensor with generated token IDs, shape (batch_size, target_sequence_length).
+        """
+        src_mask = (src != self.pad_token).long()
+        batch_size = src.size(0)
+        max_len = self.config.data.target_sequence_length
+        device = src.device
+        
+        # Start with random tokens (from uniform prior) as initial target
+        init_tgt = torch.randint(
+            self.config.data.vocabulary_size,
+            (batch_size, max_len),
+            device=device
+        )
+        
+        # Get configured values for sampling
+        num_steps = getattr(self.config.sample, 'steps', 10)
+        temperature = getattr(self.config.sample, 'temperature', 1.0)
+        
+        # Use min_steps as a lower bound for the number of steps
+        num_steps = max(num_steps, min_steps)
+        
+        for step_idx in range(num_steps):
+            logits = self.forward(src, src_mask, init_tgt)
+            
+            # Apply temperature scaling
+            if temperature < 0.01:
+                # If temperature is very low, use deterministic argmax
+                sample = torch.argmax(logits, dim=-1)
+            else:
+                # Otherwise sample from scaled logits
+                sample = Categorical(logits=logits / temperature).sample()
+                
+            init_tgt = sample
+            
+        logger.info(f"Stopped sampling after {step_idx+1} steps.")
+        
+        # Optionally trim sequences based on EOS token
+        if self.eos_token is not None and getattr(self.config.sample, 'trim_eos', False):
+            # Find first EOS token in each sequence and trim
+            eos_positions = (init_tgt == self.eos_token).nonzero()
+            for i in range(batch_size):
+                # Get positions where EOS appears in sequence i
+                seq_eos = eos_positions[eos_positions[:, 0] == i]
+                if len(seq_eos) > 0:
+                    # Take first EOS position and trim sequence
+                    first_eos = seq_eos[0, 1]
+                    init_tgt[i, first_eos+1:] = self.pad_token
+        
+        return init_tgt
+
     def validation_step(self, batch, batch_idx):
         """
         Standard validation using teacher forcing (no corruption).
