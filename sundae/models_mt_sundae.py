@@ -128,6 +128,7 @@ class SundaeMTModule(L.LightningModule):
             step_loss = F.cross_entropy(
                 step_logits.permute(0, 2, 1),  # (batch, vocab, seq)
                 tgt,                           # shape (batch, seq)
+                ignore_index=self.config.data.pad_token,
                 label_smoothing=self.config.model.label_smoothing
             )
             token_loss_sum += step_loss
@@ -213,6 +214,7 @@ class SundaeMTModule(L.LightningModule):
             step_loss = F.cross_entropy(
                 step_logits.permute(0, 2, 1),  # (batch, vocab, seq)
                 tgt,                           # shape (batch, seq)
+                ignore_index=self.config.data.pad_token,
                 label_smoothing=self.config.model.label_smoothing
             )
             token_loss_sum += step_loss
