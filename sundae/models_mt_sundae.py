@@ -117,18 +117,23 @@ class SundaeMTModule(L.LightningModule):
             current_tgt = Categorical(logits=logits).sample().detach()
             all_logits.append(logits)
         
-        final_logits = torch.cat(all_logits, dim=0)
-        return final_logits, pred_length_logits
+        # final_logits = torch.cat(all_logits, dim=0)
+        return all_logits, pred_length_logits
     
     def training_step(self, batch, batch_idx):
         src, tgt = batch['source'], batch['target']
-        logits, pred_length_logits = self.forward(src, tgt)
-        
-        repeated_tgt = tgt.repeat(self.config.unroll_steps, 1)
-        token_loss = F.cross_entropy(logits.permute(0, 2, 1),
-            repeated_tgt,
-            label_smoothing=self.config.model.label_smoothing,
-            ignore_index=self.config.data.pad_token)
+        logits_list, pred_length_logits = self.forward(src, tgt)
+
+        token_loss_sum = 0.0
+        for step_logits in logits_list:
+            step_loss = F.cross_entropy(
+                step_logits.permute(0, 2, 1),  # (batch, vocab, seq)
+                tgt,                           # shape (batch, seq)
+                label_smoothing=self.config.model.label_smoothing,
+                ignore_index=self.config.data.pad_token
+            )
+            token_loss_sum += step_loss
+        token_loss = token_loss_sum / len(logits_list)
         
         gt_len = (tgt != self.config.data.pad_token).sum(dim=1)
         gt_len_downsampled = torch.clamp((gt_len + 1) // 2, max=self.config.model.downsampled_target_length - 1)
@@ -205,12 +210,18 @@ class SundaeMTModule(L.LightningModule):
     
     def validation_step(self, batch, batch_idx):
         src, tgt = batch['source'], batch['target']
-        logits, pred_length_logits = self.forward(src, tgt)
+        logits_list, pred_length_logits = self.forward(src, tgt)
         repeated_tgt = tgt.repeat(self.config.unroll_steps, 1)
-        token_loss = F.cross_entropy(logits.permute(0, 2, 1),
-            repeated_tgt,
-            label_smoothing=self.config.model.label_smoothing,
-            ignore_index=self.config.data.pad_token)
+        token_loss_sum = 0.0
+        for step_logits in logits_list:
+            step_loss = F.cross_entropy(
+                step_logits.permute(0, 2, 1),  # (batch, vocab, seq)
+                tgt,                           # shape (batch, seq)
+                label_smoothing=self.config.model.label_smoothing,
+                ignore_index=self.config.data.pad_token
+            )
+            token_loss_sum += step_loss
+        token_loss = token_loss_sum / len(logits_list)
         gt_len = (tgt != self.config.data.pad_token).sum(dim=1)
         gt_len_downsampled = torch.clamp((gt_len + 1) // 2, max=self.config.model.downsampled_target_length - 1)
         length_loss = F.cross_entropy(pred_length_logits, gt_len_downsampled)
@@ -286,6 +297,20 @@ class SundaeMTModule(L.LightningModule):
             logger.info(f"Validation SacreBLEU: {sacrebleu_score.score:.2f}, NLTK BLEU: {nltk_bleu:.2f}")
         
         self.my_val_outputs.clear()
+
+    def on_before_optimizer_step(self, optimizer):
+        # Compute gradient norms for encoder parameters
+        encoder_params = list(self.encoder.parameters())
+        encoder_grad_norms = [p.grad.norm(2) for p in encoder_params if p.grad is not None]
+        encoder_norm = torch.stack(encoder_grad_norms).norm(2) if encoder_grad_norms else torch.tensor(0.0)
+
+        # Compute gradient norms for decoder parameters
+        decoder_params = list(self.decoder.parameters())
+        decoder_grad_norms = [p.grad.norm(2) for p in decoder_params if p.grad is not None]
+        decoder_norm = torch.stack(decoder_grad_norms).norm(2) if decoder_grad_norms else torch.tensor(0.0)
+
+        self.log("encoder_grad_norm", encoder_norm, on_step=True, prog_bar=True)
+        self.log("decoder_grad_norm", decoder_norm, on_step=True, prog_bar=True)
     
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(),
