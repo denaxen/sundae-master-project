@@ -1,3 +1,15 @@
+# at the top of your module, before any model instantiation
+from transformers.models.bert.modeling_bert import BertSelfAttention
+
+def _no_causal_mask(self, hidden_states):
+    # returns zeros of shape [batch_size, seq_len, seq_len]
+    bsz, seq_len, _ = hidden_states.size()
+    return hidden_states.new_zeros((bsz, seq_len, seq_len))
+
+# override the HF method
+BertSelfAttention.get_causal_attention_mask = _no_causal_mask
+
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -50,7 +62,7 @@ class SundaeModel(L.LightningModule):
             hidden_dropout_prob=config.model.dropout,
             attention_probs_dropout_prob=config.model.dropout,
             max_position_embeddings=max_position,
-            pad_token_id=self.pad_token
+            pad_token_id=self.pad_token,
         )
         decoder_config = BertConfig(
             vocab_size=config.data.vocabulary_size,
@@ -63,18 +75,18 @@ class SundaeModel(L.LightningModule):
             max_position_embeddings=max_position,
             pad_token_id=self.pad_token,
             is_decoder=True,       # Mark as decoder...
-            add_cross_attention=True  # ...and enable cross-attention.
+            add_cross_attention=True,  # ...and enable cross-attention.
         )
         
         # Combine into an encoder-decoder configuration.
         ed_config = EncoderDecoderConfig.from_encoder_decoder_configs(encoder_config, decoder_config)
+        ed_config.tie_word_embeddings = True
         self.model = EncoderDecoderModel(ed_config)
         
-        # For unrolled denoising we do not use causal masking in the decoder.
-        self.model.config.decoder.is_decoder = False
-        self.model.config.decoder.add_cross_attention = True
         
         # Optionally tie encoder and decoder embeddings.
+        enc_emb = self.model.encoder.get_input_embeddings()
+        self.model.decoder.set_input_embeddings(enc_emb)
         self.model.tie_weights()
         
         # The token corruption probability (for replacing tokens randomly).
