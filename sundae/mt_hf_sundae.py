@@ -1,15 +1,3 @@
-# at the top of your module, before any model instantiation
-from transformers.models.bert.modeling_bert import BertSelfAttention
-
-def _no_causal_mask(self, hidden_states):
-    # returns zeros of shape [batch_size, seq_len, seq_len]
-    bsz, seq_len, _ = hidden_states.size()
-    return hidden_states.new_zeros((bsz, seq_len, seq_len))
-
-# override the HF method
-BertSelfAttention.get_causal_attention_mask = _no_causal_mask
-
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
