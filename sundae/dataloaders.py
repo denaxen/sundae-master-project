@@ -106,14 +106,15 @@ def get_dataloaders(config):
         train_loader = DataLoader(
             data["train"],
             batch_size=config.data.loader.batch_size,
-            num_workers=config.loader.num_workers,
-            shuffle=False,
+            num_workers=config.data.loader.num_workers,
+            shuffle=True,
             pin_memory=True,
+            drop_last=True,
         )
         eval_loader = DataLoader(
             data["test"],
             batch_size=config.data.loader.batch_size,
-            num_workers=config.loader.num_workers,
+            num_workers=config.data.loader.num_workers,
             shuffle=False,
             pin_memory=True,
         )

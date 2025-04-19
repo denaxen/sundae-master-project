@@ -12,8 +12,8 @@ data:
   max_length: 128
 
   loader:
-    batch_size: 64
-    global_batch_size: 64
+    batch_size: 128
+    global_batch_size: 256
     num_workers: 4
 
 model:
@@ -36,18 +36,19 @@ model:
 
   trainer:
     _target_: lightning.pytorch.Trainer
-    max_epochs: 15
+    # max_epochs: 15
     log_every_n_steps: 1
-    val_check_interval: 1000
+    val_check_interval: 0.1
     max_steps: 300000
     # precision: "bf16-mixed"
     precision: "32-true"
     strategy: "ddp"
+    gradient_clip_val: 1.0
     enable_checkpointing: true
-    # accumulate_grad_batches: ${eval:4096 // ${loader.global_batch_size}}
+    accumulate_grad_batches: ${eval:4096 // ${loader.global_batch_size}}
     callbacks:
       - _target_: callbacks.TranslationSamplingCallback
-        sample_frequency: 1000
+        sample_frequency: 5000
         nb_samples: ${sample.nb_samples} 
       - _target_: lightning.pytorch.callbacks.ModelCheckpoint
         dirpath: ${hydra:runtime.output_dir}/checkpoints
@@ -58,9 +59,9 @@ model:
         mode: "max"
 
 loader:
-  batch_size: 256
-  global_batch_size: 256
-  num_workers: 4
+  batch_size: ${data.loader.batch_size}
+  global_batch_size: ${data.loader.global_batch_size}
+  num_workers: ${data.loader.num_workers}
 
 optimizer:
   learning_rate: 1e-5

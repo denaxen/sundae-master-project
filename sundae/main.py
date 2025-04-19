@@ -109,8 +109,8 @@ def main(config):
         L.seed_everything(0)
     # if config.config_optimizer_and_batch_automatically:
     #     configure_optimizer(config)
-    if config.loader.global_batch_size < config.loader.batch_size:
-        config.loader.batch_size = config.loader.global_batch_size
+    if config.data.loader.global_batch_size < config.data.loader.batch_size:
+        config.data.loader.batch_size = config.data.loader.global_batch_size
 
     # OmegaConf.save(config=config, f=Path(os.getcwd()) / "config.yaml")
 

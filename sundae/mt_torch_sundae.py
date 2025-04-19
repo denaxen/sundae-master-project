@@ -92,7 +92,8 @@ class SundaeModel(L.LightningModule):
             num_decoder_layers=config.model.nb_layers,
             dim_feedforward=config.model.feedforward_dim,
             dropout=config.model.dropout,
-            batch_first=True
+            batch_first=True,
+            norm_first=True
         )
         self.output_proj = nn.Linear(E, V, bias=False)
         self.output_proj.weight = self.token_emb.weight
