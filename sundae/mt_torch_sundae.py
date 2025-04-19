@@ -64,7 +64,7 @@ class SundaeModel(L.LightningModule):
         
         V = config.data.vocabulary_size
         E = config.model.embedding_dim
-        N = max(config.data.source_sequence_length, config.data.target_sequence_length)
+        N = max(config.data.source_sequence_length, config.data.target_sequence_length) + 1 # +1 because we add [LEN]
 
         # token + position embeddings (shared)
         self.token_emb   = nn.Embedding(V, E, padding_idx=config.data.pad_token)
@@ -133,17 +133,42 @@ class SundaeModel(L.LightningModule):
         corrupted[mask] = random_tokens[mask]
         return corrupted
 
-    def _encode(self, src_ids):
+    def _encode(self, src_ids, length_ids=None):
         """
         Run the Transformer encoder and return:
           enc_out ........ (B, S, E) contextual embeddings
           src_key_pad .... Bool mask, True where PAD
         """
         B, S = src_ids.shape
-        src_pos = torch.arange(S, device=src_ids.device).unsqueeze(0).expand(B, -1)
-        src_emb = self.dropout(self.token_emb(src_ids) + self.pos_emb(src_pos))
-
         src_key_pad = src_ids == self.pad_token         # (B, S)
+        
+        # prepend length embedding if provided
+        if length_ids is not None:
+            # length_ids: (B,) in [0..Dd-1]
+            len_e = self.length_emb(length_ids)           # (B, E)
+            len_e = len_e.unsqueeze(1)                    # (B, 1, E)
+            
+            # Compute token embeddings (without positional embeddings yet)
+            src_tok_emb = self.token_emb(src_ids)
+
+            # Keep every source token; allocate one extra position for [LEN]
+            len_pos = torch.zeros((B, 1), dtype=torch.long, device=src_ids.device)
+            src_pos = torch.arange(1, S + 1, device=src_ids.device).unsqueeze(0).expand(B, -1)
+            pos = torch.cat([len_pos, src_pos], dim=1)
+            
+            # Apply token embeddings and positional embeddings separately
+            src_emb = torch.cat([len_e, src_tok_emb], dim=1)
+            pos_emb = self.pos_emb(pos)
+            src_emb = self.dropout(src_emb + pos_emb)
+            
+            # Padding mask must match the new length (S+1)
+            len_pad = torch.zeros((B, 1), dtype=torch.bool, device=src_key_pad.device)
+            src_key_pad = torch.cat([len_pad, src_key_pad], dim=1)   # no slice
+        else:
+            # Standard case without length token: just use normal positional encoding
+            src_pos = torch.arange(S, device=src_ids.device).unsqueeze(0).expand(B, -1)
+            src_emb = self.dropout(self.token_emb(src_ids) + self.pos_emb(src_pos))
+
         enc_out = self.model.encoder(                   # nn.Transformer has .encoder
             src=src_emb,
             src_key_padding_mask=src_key_pad
@@ -173,37 +198,12 @@ class SundaeModel(L.LightningModule):
 
         # If encoder output is not provided, compute it
         if encoder_output is None or src_key_padding_mask is None:
-            src_pos = torch.arange(S, device=src_ids.device).unsqueeze(0).expand(B, -1)
-            src_emb = self.dropout(self.token_emb(src_ids) + self.pos_emb(src_pos))
-            
-            # Build key_padding_mask: True at padding positions
-            src_key_pad = src_ids == self.pad_token
-            
-            # prepend length embedding if provided
-            if length_ids is not None:
-                # length_ids: (B,) in [0..Dd-1]
-                len_e = self.length_emb(length_ids)           # (B, E)
-                len_e = len_e.unsqueeze(1)                    # (B, 1, E)
-                # drop last position so shapes match
-                src_emb = torch.cat([len_e, src_emb[:, :-1, :]], dim=1)
-                
-            # Call encoder
-            memory = self.model.encoder(
-                src=src_emb,
-                src_key_padding_mask=src_key_pad
-            )
+            # Call encoder with length_ids
+            memory, src_key_pad = self._encode(src_ids, length_ids)
         else:
             # Use provided encoder output
             memory = encoder_output
             src_key_pad = src_key_padding_mask
-            
-            # prepend length embedding if provided
-            if length_ids is not None:
-                # length_ids: (B,) in [0..Dd-1]
-                len_e = self.length_emb(length_ids)           # (B, E)
-                len_e = len_e.unsqueeze(1)                    # (B, 1, E)
-                # drop last position so we don't exceed the expected sequence length
-                memory = torch.cat([len_e, memory[:, :-1, :]], dim=1)
 
         # 2) Build tgt key_padding_mask
         tgt_key_pad = tgt_ids == self.pad_token
@@ -254,25 +254,26 @@ class SundaeModel(L.LightningModule):
         # First step: corrupt the target tokens.
         corrupted_tgt = self.corrupt_tokens(tgt)
         
+        # Call encoder again with the length token
+        enc_out_with_len, src_key_pad_with_len = self._encode(src, down_len)
+        
         logits1 = self.forward(
             src, 
             corrupted_tgt, 
-            length_ids=down_len, 
-            encoder_output=enc_out, 
-            src_key_padding_mask=src_key_pad
+            encoder_output=enc_out_with_len, 
+            src_key_padding_mask=src_key_pad_with_len
         )
         vocab_size = logits1.shape[-1]
         loss1 = self.criterion(logits1.view(-1, vocab_size), tgt.view(-1))
         
         # Detach argmax predictions from the first pass.
-        pred1 = torch.argmax(logits1, dim=-1).detach()
+        pred1 = Categorical(logits=logits1).sample().detach()
         
         logits2 = self.forward(
             src, 
             pred1, 
-            length_ids=down_len, 
-            encoder_output=enc_out, 
-            src_key_padding_mask=src_key_pad
+            encoder_output=enc_out_with_len, 
+            src_key_padding_mask=src_key_pad_with_len
         )
         loss2 = self.criterion(logits2.view(-1, vocab_size), tgt.view(-1))
         
@@ -333,14 +334,13 @@ class SundaeModel(L.LightningModule):
         self.log("val_rmse_length_error", length_rmse, prog_bar=True, on_epoch=True, sync_dist=True)
         self.log("val_length_class_accuracy", length_accuracy, prog_bar=True, on_epoch=True, sync_dist=True)
         
-        # Run encoder once
-        enc_out, src_key_pad = self._encode(src)
+        # Run encoder with length_ids
+        enc_out, src_key_pad = self._encode(src, length_ids)
         
         # Get output logits
         logits = self.forward(
             src, 
             tgt, 
-            length_ids=length_ids, 
             encoder_output=enc_out, 
             src_key_padding_mask=src_key_pad
         )
@@ -420,11 +420,11 @@ class SundaeModel(L.LightningModule):
         temperature = temperature or self.config.sample.temperature
         num_samples = num_samples or self.config.sample.num_samples
 
-        # 1) encode once
-        enc_out, src_key_pad = self._encode(src)
-
-        # 2) predict length once
+        # 1) predict length once
         length_ids, _ = self._predict_length(src)
+
+        # 2) encode once with length token
+        enc_out, src_key_pad = self._encode(src, length_ids)
 
         # placeholders for best so far
         best_seqs = None                         # Tensor[B, T]
@@ -434,13 +434,14 @@ class SundaeModel(L.LightningModule):
 
         for _ in range(num_samples):
             # 3) init random tgt
-            tgt = torch.randint(V, (batch_size, tgt_len), device=device)
+            # after - skip pad id
+            valid = torch.randint(0, V-1, (batch_size, tgt_len), device=device)
+            tgt = valid + (valid >= self.pad_token).long()
 
             # 4) iterative refine
             for _ in range(num_steps):
                 logits = self.forward(
                     src, tgt,
-                    length_ids=length_ids,
                     encoder_output=enc_out,
                     src_key_padding_mask=src_key_pad
                 )
@@ -452,7 +453,6 @@ class SundaeModel(L.LightningModule):
             # 5) score this candidate
             final_logits = self.forward(
                 src, tgt,
-                length_ids=length_ids,
                 encoder_output=enc_out,
                 src_key_padding_mask=src_key_pad
             )
