@@ -42,7 +42,7 @@ model:
     max_steps: 300000
     # precision: "bf16-mixed"
     precision: "32-true"
-    strategy: "ddp_find_unused_parameters_true"
+    strategy: "ddp"
     enable_checkpointing: true
     # accumulate_grad_batches: ${eval:4096 // ${loader.global_batch_size}}
     callbacks:
@@ -82,9 +82,9 @@ sample:
   sample_proportion: 0.3
   sample_frequency: 1
   steps: 16
-  min_steps: 10
   nb_samples: 1
   trim_eos: false
+  num_samples: 16
 
 checkpointing:
   resume_from_ckpt: false

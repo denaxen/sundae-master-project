@@ -2,35 +2,57 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import lightning as L
-from transformers import EncoderDecoderModel, EncoderDecoderConfig, BertConfig, AutoTokenizer
+from transformers import AutoTokenizer
 import math
 from loguru import logger
 import sacrebleu
 import nltk
 from torch.distributions.categorical import Categorical
 
+class ResidualBlock(nn.Module):
+    def __init__(self, dim, hidden_dim):
+        super().__init__()
+        self.fc1   = nn.Linear(dim, hidden_dim)
+        self.fc2   = nn.Linear(hidden_dim, dim)
+        self.act   = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        # simple two‐layer bottleneck with skip
+        h = self.act(self.fc1(x))
+        h = self.fc2(h)
+        return self.act(x + h)
+
+class LengthPredictor(nn.Module):
+    """
+    6‐block residual predictor of downsampled target length.
+    Input: pooled encoder embedding of size E
+    Output: logits over Dd length classes
+    """
+    def __init__(self, embed_dim, hidden_dim, num_blocks, num_classes):
+        super().__init__()
+        # optional "stem" to mix features (could be identity)
+        self.stem   = nn.Linear(embed_dim, embed_dim)
+        # six residual blocks
+        self.blocks = nn.ModuleList([
+            ResidualBlock(embed_dim, hidden_dim)
+            for _ in range(num_blocks)
+        ])
+        # final classifier to length‐ids
+        self.classifier = nn.Linear(embed_dim, num_classes)
+
+    def forward(self, x):
+        # x: (B, E)
+        h = self.stem(x)
+        for block in self.blocks:
+            h = block(h)
+        return self.classifier(h)  # (B, num_classes)
+
 class SundaeModel(L.LightningModule):
-    """
-    SUNDAE for Machine Translation implemented in PyTorch Lightning.
-    
-    This model builds an encoder–decoder transformer from scratch using Hugging Face's
-    BertConfig and EncoderDecoderModel. It disables autoregressive masking in the decoder
-    (making it bidirectional) and performs iterative denoising unrolling during training.
-    
-    The configuration `config` is expected to have attributes:
-      - config.data.vocabulary_size, config.data.pad_token, config.data.shared_tokenizer_path
-      - config.data.source_sequence_length, config.data.target_sequence_length
-      - config.model.embedding_dim, nb_layers, nb_heads, feedforward_dim, dropout,
-        tie_token_emb, corruption_prob, unroll_steps
-      - config.optimizer.learning_rate, betas, eps, and optionally weight_decay
-      - config.sample.temperature (for iterative refinement generation)
-    """
     def __init__(self, config):
         super().__init__()
         self.save_hyperparameters()
         self.config = config
         self.pad_token = config.data.pad_token
-        self.eos_token = getattr(config.data, 'eos_token', None)
         # Load the shared tokenizer using the provided path.
         self.tokenizer = AutoTokenizer.from_pretrained(config.data.shared_tokenizer_path)
         
@@ -47,6 +69,21 @@ class SundaeModel(L.LightningModule):
         # token + position embeddings (shared)
         self.token_emb   = nn.Embedding(V, E, padding_idx=config.data.pad_token)
         self.pos_emb     = nn.Embedding(N, E)
+        self.dropout     = nn.Dropout(config.model.dropout)
+
+        # ——— length prediction head ———
+        H = config.model.target_length_prediction_hidden_dim
+        Dd = config.model.downsampled_target_length  # e.g. 64
+
+        # embedding for the (downsampled) length to prepend
+        self.length_pred = LengthPredictor(
+            embed_dim=E,
+            hidden_dim=H,
+            num_blocks=6,     # six residual blocks
+            num_classes=Dd
+        )
+        self.length_emb  = nn.Embedding(Dd, E)
+        self.length_loss_weight = config.model.length_loss_weight
 
         self.model = nn.Transformer(
             d_model=E,
@@ -59,15 +96,9 @@ class SundaeModel(L.LightningModule):
         )
         self.output_proj = nn.Linear(E, V, bias=False)
         self.output_proj.weight = self.token_emb.weight
-        
-        
-        # The token corruption probability (for replacing tokens randomly).
-        self.corruption_prob = config.model.corruption_prob if hasattr(config.model, 'corruption_prob') else 0.3
-        # Number of unrolled denoising steps (typically 2 for SUNDAE).
-        self.unroll_steps = config.model.unroll_steps if hasattr(config.model, 'unroll_steps') else 2
 
         # Loss: simple cross-entropy ignoring pad tokens.
-        self.criterion = nn.CrossEntropyLoss(ignore_index=self.pad_token)
+        self.criterion = nn.CrossEntropyLoss(ignore_index=self.pad_token, label_smoothing=self.config.model.label_smoothing)
         
         logger.info(f"Total trainable parameters: {sum(p.numel() for p in self.parameters() if p.requires_grad):,}")
 
@@ -77,35 +108,110 @@ class SundaeModel(L.LightningModule):
         """
         if not self.training:
             return token_ids
-        # Create a corruption mask.
-        noise = torch.rand(token_ids.shape, device=token_ids.device)
-        mask = (noise < self.corruption_prob) & (token_ids != self.pad_token)
-        # Random tokens uniformly sampled.
-        random_tokens = torch.randint(low=0, high=self.config.data.vocabulary_size, size=token_ids.shape, device=token_ids.device)
+
+        B, L = token_ids.shape
+        device = token_ids.device
+        V = self.config.data.vocabulary_size
+        pad = self.pad_token
+
+        # 1) sample a corruption rate per example
+        alphas = torch.rand(B, device=device).unsqueeze(1)   # (B,1), each in [0,1)
+        # 2) for each token generate U(0,1) noise, compare to alpha
+        noise = torch.rand(B, L, device=device)
+        # mask = (noise < alpha) & (token != pad)
+        mask  = noise < alphas
+        mask &= (token_ids != pad)
+
+        # 3) sample random tokens (exclude pad token)
+        # Create a tensor of random values between 0 and V-1
+        random_tokens = torch.randint(0, V-1, (B, L), device=device)
+        # Shift values >= pad up by 1 to skip the pad token
+        random_tokens = random_tokens + (random_tokens >= pad).long()
+
+        # 4) apply
         corrupted = token_ids.clone()
         corrupted[mask] = random_tokens[mask]
         return corrupted
 
-    def forward(self, src_ids, tgt_ids):
+    def _encode(self, src_ids):
+        """
+        Run the Transformer encoder and return:
+          enc_out ........ (B, S, E) contextual embeddings
+          src_key_pad .... Bool mask, True where PAD
+        """
+        B, S = src_ids.shape
+        src_pos = torch.arange(S, device=src_ids.device).unsqueeze(0).expand(B, -1)
+        src_emb = self.dropout(self.token_emb(src_ids) + self.pos_emb(src_pos))
+
+        src_key_pad = src_ids == self.pad_token         # (B, S)
+        enc_out = self.model.encoder(                   # nn.Transformer has .encoder
+            src=src_emb,
+            src_key_padding_mask=src_key_pad
+        )                                               # (B, S, E)
+
+        return enc_out, src_key_pad
+
+    def _compute_length_metrics(self, length_logits, true_downsampled_len):
+        """Calculate RMSE and accuracy for length prediction"""
+        pred_lengths = torch.argmax(length_logits, dim=1)
+        accuracy = (pred_lengths == true_downsampled_len).float().mean()
+        
+        # Convert indices to actual lengths for RMSE calculation
+        # Use MSE loss first, then take square root
+        mse = F.mse_loss(pred_lengths.float(), true_downsampled_len.float())
+        rmse = torch.sqrt(mse)
+        
+        return rmse, accuracy
+
+    def forward(self, src_ids, tgt_ids, length_ids=None, encoder_output=None, src_key_padding_mask=None):
         # 1) Embed and add positional encodings
         B, S = src_ids.shape
         _, T = tgt_ids.shape
-        src_pos = torch.arange(S, device=src_ids.device).unsqueeze(0).expand(B, -1)
+        
         tgt_pos = torch.arange(T, device=tgt_ids.device).unsqueeze(0).expand(B, -1)
+        tgt_emb = self.dropout(self.token_emb(tgt_ids) + self.pos_emb(tgt_pos))
 
-        src_emb = self.token_emb(src_ids) + self.pos_emb(src_pos)
-        tgt_emb = self.token_emb(tgt_ids) + self.pos_emb(tgt_pos)
+        # If encoder output is not provided, compute it
+        if encoder_output is None or src_key_padding_mask is None:
+            src_pos = torch.arange(S, device=src_ids.device).unsqueeze(0).expand(B, -1)
+            src_emb = self.dropout(self.token_emb(src_ids) + self.pos_emb(src_pos))
+            
+            # Build key_padding_mask: True at padding positions
+            src_key_pad = src_ids == self.pad_token
+            
+            # prepend length embedding if provided
+            if length_ids is not None:
+                # length_ids: (B,) in [0..Dd-1]
+                len_e = self.length_emb(length_ids)           # (B, E)
+                len_e = len_e.unsqueeze(1)                    # (B, 1, E)
+                # drop last position so shapes match
+                src_emb = torch.cat([len_e, src_emb[:, :-1, :]], dim=1)
+                
+            # Call encoder
+            memory = self.model.encoder(
+                src=src_emb,
+                src_key_padding_mask=src_key_pad
+            )
+        else:
+            # Use provided encoder output
+            memory = encoder_output
+            src_key_pad = src_key_padding_mask
+            
+            # prepend length embedding if provided
+            if length_ids is not None:
+                # length_ids: (B,) in [0..Dd-1]
+                len_e = self.length_emb(length_ids)           # (B, E)
+                len_e = len_e.unsqueeze(1)                    # (B, 1, E)
+                # drop last position so we don't exceed the expected sequence length
+                memory = torch.cat([len_e, memory[:, :-1, :]], dim=1)
 
-        # 2) Build key_padding_mask: True at padding positions
-        src_key_pad = src_ids == self.pad_token
+        # 2) Build tgt key_padding_mask
         tgt_key_pad = tgt_ids == self.pad_token
 
-        # 3) Call transformer (no causal mask → bidirectional self-attention in decoder)
-        #    memory_key_padding_mask prevents encoder attending padding
-        out = self.model(
-            src=src_emb,
+        # 3) Call transformer decoder (no causal mask → bidirectional self-attention)
+        out = self.model.decoder(
             tgt=tgt_emb,
-            src_key_padding_mask=src_key_pad,
+            memory=memory,
             tgt_key_padding_mask=tgt_key_pad,
             memory_key_padding_mask=src_key_pad,
             # do NOT pass any `tgt_mask` → no triangular masking
@@ -127,21 +233,58 @@ class SundaeModel(L.LightningModule):
         src = batch['source']
         tgt = batch['target']
 
+        # compute true downsampled target length
+        # count non-pad tokens, then ceil-divide by 2
+        true_len = (tgt != self.pad_token).sum(dim=1)           # (B,)
+        down_len = ((true_len + 1) // 2).clamp(max=self.config.model.downsampled_target_length - 1)
+
+        # SINGLE encoder pass to be reused for all operations
+        enc_out, src_key_pad = self._encode(src)
+        
+        # Length prediction using the encoded output
+        with torch.no_grad():
+            mask = (~src_key_pad).unsqueeze(-1)
+            pooled = enc_out.masked_fill(~mask, 0.0).sum(1) / mask.sum(1).clamp(min=1)
+        length_logits = self.length_pred(pooled.detach())
+        length_loss  = F.cross_entropy(length_logits, down_len)
+        
+        # Calculate length prediction metrics
+        length_rmse, length_accuracy = self._compute_length_metrics(length_logits, down_len)
+
         # First step: corrupt the target tokens.
         corrupted_tgt = self.corrupt_tokens(tgt)
-        logits1 = self.forward(src, corrupted_tgt)
+        
+        logits1 = self.forward(
+            src, 
+            corrupted_tgt, 
+            length_ids=down_len, 
+            encoder_output=enc_out, 
+            src_key_padding_mask=src_key_pad
+        )
         vocab_size = logits1.shape[-1]
         loss1 = self.criterion(logits1.view(-1, vocab_size), tgt.view(-1))
         
         # Detach argmax predictions from the first pass.
         pred1 = torch.argmax(logits1, dim=-1).detach()
         
-        # Second step: feed first-step predictions.
-        logits2 = self.forward(src, pred1)
+        logits2 = self.forward(
+            src, 
+            pred1, 
+            length_ids=down_len, 
+            encoder_output=enc_out, 
+            src_key_padding_mask=src_key_pad
+        )
         loss2 = self.criterion(logits2.view(-1, vocab_size), tgt.view(-1))
         
-        total_loss = (loss1 + loss2) / 2.0
-        self.log("train_token_loss", total_loss, prog_bar=True, on_step=True)
+        total_token_loss = (loss1 + loss2) / 2.0
+        total_loss = total_token_loss + self.length_loss_weight * length_loss
+        self.log("train_token_loss", total_token_loss, prog_bar=True, on_step=True)
+        self.log("train_length_loss", length_loss, prog_bar=False, on_step=True)
+        self.log("train_loss", total_loss, prog_bar=True, on_step=True)
+        
+        # Log length prediction metrics
+        self.log("train_rmse_length_error", length_rmse, prog_bar=True, on_step=True)
+        self.log("train_length_class_accuracy", length_accuracy, prog_bar=True, on_step=True)
         
         # Log individual losses
         self.log("train_loss_step1", loss1, prog_bar=False, on_step=True)
@@ -154,65 +297,20 @@ class SundaeModel(L.LightningModule):
             
         return total_loss
 
-    def sample_translation(self, src, min_steps=4):
-        """Generate translation for a given source batch.
-        
-        This function works similarly to generate() but follows the implementation style
-        from the original models_mt_sundae.py.
-        
-        Args:
-            src (Tensor): Source token IDs, shape (batch_size, src_seq_len).
-            min_steps (int): Minimum number of refinement iterations.
-            
-        Returns:
-            Tensor with generated token IDs, shape (batch_size, target_sequence_length).
+    def _predict_length(self, src):
         """
-        batch_size = src.size(0)
-        max_len = self.config.data.target_sequence_length
-        device = src.device
-        
-        # Start with random tokens (from uniform prior) as initial target
-        init_tgt = torch.randint(
-            self.config.data.vocabulary_size,
-            (batch_size, max_len),
-            device=device
-        )
-        
-        # Get configured values for sampling
-        num_steps = getattr(self.config.sample, 'steps', 10)
-        temperature = getattr(self.config.sample, 'temperature', 1.0)
-        
-        # Use min_steps as a lower bound for the number of steps
-        num_steps = max(num_steps, min_steps)
-        
-        for step_idx in range(num_steps):
-            logits = self.forward(src, init_tgt)
-            
-            # Apply temperature scaling
-            if temperature < 0.01:
-                # If temperature is very low, use deterministic argmax
-                sample = torch.argmax(logits, dim=-1)
-            else:
-                # Otherwise sample from scaled logits
-                sample = Categorical(logits=logits / temperature).sample()
-                
-            init_tgt = sample
-            
-        logger.info(f"Stopped sampling after {step_idx+1} steps.")
-        
-        # Optionally trim sequences based on EOS token
-        if self.eos_token is not None and getattr(self.config.sample, 'trim_eos', False):
-            # Find first EOS token in each sequence and trim
-            eos_positions = (init_tgt == self.eos_token).nonzero()
-            for i in range(batch_size):
-                # Get positions where EOS appears in sequence i
-                seq_eos = eos_positions[eos_positions[:, 0] == i]
-                if len(seq_eos) > 0:
-                    # Take first EOS position and trim sequence
-                    first_eos = seq_eos[0, 1]
-                    init_tgt[i, first_eos+1:] = self.pad_token
-        
-        return init_tgt
+        Helper to go from src IDs → downsampled length IDs.
+        Mirrors the code in training_step for length_pred.
+        """
+        with torch.no_grad():
+            enc_out, src_key_pad = self._encode(src)
+            mask = (~src_key_pad).unsqueeze(-1)
+            enc_out = enc_out.masked_fill(~mask, 0.0)
+            pooled = enc_out.sum(dim=1) / mask.sum(dim=1).clamp(min=1)
+
+        length_logits = self.length_pred(pooled)      # (B,Dd)
+        length_ids    = length_logits.argmax(dim=1)   # (B,)
+        return length_ids, length_logits
 
     def validation_step(self, batch, batch_idx):
         """
@@ -220,12 +318,37 @@ class SundaeModel(L.LightningModule):
         """
         src = batch['source']
         tgt = batch['target']
-        logits = self.forward(src, tgt)
+        
+        # Compute true downsampled target length
+        true_len = (tgt != self.pad_token).sum(dim=1)
+        down_len = ((true_len + 1) // 2).clamp(max=self.config.model.downsampled_target_length - 1)
+        
+        # Get length predictions
+        length_ids, length_logits = self._predict_length(src)
+        
+        # Calculate length prediction metrics
+        length_rmse, length_accuracy = self._compute_length_metrics(length_logits, down_len)
+        
+        # Log length prediction metrics
+        self.log("val_rmse_length_error", length_rmse, prog_bar=True, on_epoch=True, sync_dist=True)
+        self.log("val_length_class_accuracy", length_accuracy, prog_bar=True, on_epoch=True, sync_dist=True)
+        
+        # Run encoder once
+        enc_out, src_key_pad = self._encode(src)
+        
+        # Get output logits
+        logits = self.forward(
+            src, 
+            tgt, 
+            length_ids=length_ids, 
+            encoder_output=enc_out, 
+            src_key_padding_mask=src_key_pad
+        )
         vocab_size = logits.shape[-1]
         loss = self.criterion(logits.view(-1, vocab_size), tgt.view(-1))
-        self.log("val_loss", loss, prog_bar=True, on_step=False, sync_dist=True)
+        self.log("val_loss", loss, prog_bar=True, on_epoch=True, sync_dist=True)
         
-        out = {"loss": loss}
+        out = {"loss": loss, "length_rmse": length_rmse, "length_accuracy": length_accuracy}
         # Only sample from the first batch to keep validation fast
         if batch_idx == 0:
             generated_tokens = self.generate(src)
@@ -286,9 +409,10 @@ class SundaeModel(L.LightningModule):
         grad_norm = torch.norm(torch.stack([p.grad.norm(2) for p in all_params if p.grad is not None]), 2)
         self.log("grad_norm", grad_norm, on_step=True, prog_bar=True)
 
-    def generate(self, src, num_steps=None, temperature=None):
+    
+    def generate(self, src, num_steps=None, temperature=None, num_samples=None):
         """
-        Generate translations via iterative refinement (unrolled denoising).
+        Generate translations via iterative refinement (unrolled denoising) with multiple samples.
         
         Args:
             src (Tensor): Source token IDs, shape (batch_size, src_seq_len).
@@ -296,48 +420,83 @@ class SundaeModel(L.LightningModule):
                 If None, uses config.sample.steps.
             temperature (float, optional): Temperature scaling for logits.
                 If None, uses config.sample.temperature.
+            num_samples (int, optional): Number of samples to generate and rerank.
+                If None, uses config.sample.num_samples.
         
         Returns:
             Tensor with generated token IDs, shape (batch_size, target_sequence_length).
         """
-        batch_size = src.size(0)
+        batch_size, src_len = src.size()
         tgt_len = self.config.data.target_sequence_length
+        V = self.config.data.vocabulary_size
         device = src.device
-        
-        # Use configured values if not provided
-        if num_steps is None:
-            num_steps = getattr(self.config.sample, 'steps', 10)
-        if temperature is None:
-            temperature = getattr(self.config.sample, 'temperature', 1.0)
-        
-        # Start with random tokens (from uniform prior) as initial target.
-        current_tgt = torch.randint(low=0, high=self.config.data.vocabulary_size, size=(batch_size, tgt_len), device=device)
-        
-        for step_idx in range(num_steps):
-            logits = self.forward(src, current_tgt)
+
+        # defaults
+        num_steps   = num_steps   or self.config.sample.steps
+        temperature = temperature or self.config.sample.temperature
+        num_samples = num_samples or self.config.sample.num_samples  # e.g. 16
+
+        # 1) predict lengths once per example
+        length_ids, _ = self._predict_length(src)  # (B,)
+
+        # 2) expand src and length_ids to (B * n)
+        src_exp = src.unsqueeze(1).expand(-1, num_samples, -1)         # (B, n, S)
+        src_flat = src_exp.reshape(batch_size * num_samples, src_len)  # (B*n, S)
+
+        len_exp = length_ids.unsqueeze(1).expand(-1, num_samples)      # (B, n)
+        len_flat = len_exp.reshape(batch_size * num_samples)           # (B*n,)
+
+        # 3) initialize random targets: (B*n, Tgt)
+        raw = torch.randint(V-1, (batch_size * num_samples, tgt_len), device=device)
+        tgt_flat = raw + (raw >= self.pad_token).long()
+
+        # Compute encoder outputs once and reuse them for all refinement steps
+        enc_out, src_key_pad = self._encode(src_flat)
+
+        # 4) iterative refinement on the flattened batch
+        for step in range(num_steps):
+            logits = self.forward(
+                src_flat, 
+                tgt_flat, 
+                length_ids=len_flat,
+                encoder_output=enc_out,
+                src_key_padding_mask=src_key_pad
+            )  # (B*n, T, V)
             
-            # Apply temperature scaling
-            # If temperature is very low, use argmax; otherwise sample from the distribution
-            if temperature < 0.01:
-                current_tgt = torch.argmax(logits, dim=-1)
+            if temperature < 1e-2:
+                # near‐deterministic
+                tgt_flat = logits.argmax(dim=-1)
             else:
-                current_tgt = Categorical(logits=logits / temperature).sample()
-                
-        logger.info(f"Stopped sampling after {num_steps} steps.")
+                # sample at temperature
+                tgt_flat = Categorical(logits=logits / temperature).sample()
+
+        # 5) rerank by model log‑prob
+        #   compute log‐softmax once more
+        final_logits = self.forward(
+            src_flat, 
+            tgt_flat, 
+            length_ids=len_flat,
+            encoder_output=enc_out,
+            src_key_padding_mask=src_key_pad
+        )
+        logp = F.log_softmax(final_logits, dim=-1)                     # (B*n, T, V)
+
+        # gather log‐probs at the chosen tokens
+        # tgt_flat.unsqueeze(-1) → (B*n, T, 1)
+        tok_logp = logp.gather(-1, tgt_flat.unsqueeze(-1)).squeeze(-1)  # (B*n, T)
+        seq_logp = tok_logp.sum(dim=-1)                                # (B*n,)
+
+        # reshape back to (B, n) and pick best idx per example
+        seq_logp = seq_logp.view(batch_size, num_samples)              # (B, n)
+        best_idx = seq_logp.argmax(dim=1)                              # (B,)
+
+        # reshape tgt_flat likewise and index
+        tgt_reshaped = tgt_flat.view(batch_size, num_samples, tgt_len) # (B, n, T)
+        best = tgt_reshaped[torch.arange(batch_size), best_idx]        # (B, T)
+
+        logger.info(f"Generated {num_samples} samples per input and selected best after {num_steps} refinement steps.")
         
-        # Optionally trim based on EOS token
-        if self.eos_token is not None and getattr(self.config.sample, 'trim_eos', False):
-            # Find first EOS token in each sequence and trim
-            eos_positions = (current_tgt == self.eos_token).nonzero()
-            for i in range(batch_size):
-                # Get positions where EOS appears in sequence i
-                seq_eos = eos_positions[eos_positions[:, 0] == i]
-                if len(seq_eos) > 0:
-                    # Take first EOS position and trim sequence
-                    first_eos = seq_eos[0, 1]
-                    current_tgt[i, first_eos+1:] = self.pad_token
-        
-        return current_tgt
+        return best
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(),

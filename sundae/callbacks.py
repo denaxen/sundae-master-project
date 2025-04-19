@@ -73,7 +73,7 @@ class TranslationSamplingCallback(L.Callback):
                     src = sample['source'].unsqueeze(0).to(pl_module.device)
                     
                     # Generate translation
-                    translation = pl_module.sample_translation(src)
+                    translation = pl_module.generate(src)
                     
                     # Decode using shared tokenizer
                     decoded_text = tokenizer.decode(translation[0].tolist(), skip_special_tokens=True)
