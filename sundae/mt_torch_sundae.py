@@ -409,94 +409,67 @@ class SundaeModel(L.LightningModule):
         grad_norm = torch.norm(torch.stack([p.grad.norm(2) for p in all_params if p.grad is not None]), 2)
         self.log("grad_norm", grad_norm, on_step=True, prog_bar=True)
 
-    
+    @torch.no_grad()
     def generate(self, src, num_steps=None, temperature=None, num_samples=None):
-        """
-        Generate translations via iterative refinement (unrolled denoising) with multiple samples.
-        
-        Args:
-            src (Tensor): Source token IDs, shape (batch_size, src_seq_len).
-            num_steps (int, optional): Number of refinement iterations.
-                If None, uses config.sample.steps.
-            temperature (float, optional): Temperature scaling for logits.
-                If None, uses config.sample.temperature.
-            num_samples (int, optional): Number of samples to generate and rerank.
-                If None, uses config.sample.num_samples.
-        
-        Returns:
-            Tensor with generated token IDs, shape (batch_size, target_sequence_length).
-        """
         batch_size, src_len = src.size()
         tgt_len = self.config.data.target_sequence_length
         V = self.config.data.vocabulary_size
         device = src.device
 
-        # defaults
         num_steps   = num_steps   or self.config.sample.steps
         temperature = temperature or self.config.sample.temperature
-        num_samples = num_samples or self.config.sample.num_samples  # e.g. 16
+        num_samples = num_samples or self.config.sample.num_samples
 
-        # 1) predict lengths once per example
-        length_ids, _ = self._predict_length(src)  # (B,)
+        # 1) encode once
+        enc_out, src_key_pad = self._encode(src)
 
-        # 2) expand src and length_ids to (B * n)
-        src_exp = src.unsqueeze(1).expand(-1, num_samples, -1)         # (B, n, S)
-        src_flat = src_exp.reshape(batch_size * num_samples, src_len)  # (B*n, S)
+        # 2) predict length once
+        length_ids, _ = self._predict_length(src)
 
-        len_exp = length_ids.unsqueeze(1).expand(-1, num_samples)      # (B, n)
-        len_flat = len_exp.reshape(batch_size * num_samples)           # (B*n,)
+        # placeholders for best so far
+        best_seqs = None                         # Tensor[B, T]
+        best_scores = torch.full(
+            (batch_size,), float('-inf'), device=device
+        )
 
-        # 3) initialize random targets: (B*n, Tgt)
-        raw = torch.randint(V-1, (batch_size * num_samples, tgt_len), device=device)
-        tgt_flat = raw + (raw >= self.pad_token).long()
+        for _ in range(num_samples):
+            # 3) init random tgt
+            tgt = torch.randint(V, (batch_size, tgt_len), device=device)
 
-        # Compute encoder outputs once and reuse them for all refinement steps
-        enc_out, src_key_pad = self._encode(src_flat)
+            # 4) iterative refine
+            for _ in range(num_steps):
+                logits = self.forward(
+                    src, tgt,
+                    length_ids=length_ids,
+                    encoder_output=enc_out,
+                    src_key_padding_mask=src_key_pad
+                )
+                if temperature < 1e-2:
+                    tgt = logits.argmax(dim=-1)
+                else:
+                    tgt = Categorical(logits=logits / temperature).sample()
 
-        # 4) iterative refinement on the flattened batch
-        for step in range(num_steps):
-            logits = self.forward(
-                src_flat, 
-                tgt_flat, 
-                length_ids=len_flat,
+            # 5) score this candidate
+            final_logits = self.forward(
+                src, tgt,
+                length_ids=length_ids,
                 encoder_output=enc_out,
                 src_key_padding_mask=src_key_pad
-            )  # (B*n, T, V)
-            
-            if temperature < 1e-2:
-                # near‐deterministic
-                tgt_flat = logits.argmax(dim=-1)
+            )
+            logp = F.log_softmax(final_logits, dim=-1)         # (B, T, V)
+            tok_logp = logp.gather(-1, tgt.unsqueeze(-1)).squeeze(-1)  # (B, T)
+            seq_score = tok_logp.sum(dim=-1)                   # (B,)
+
+            # 6) update bests
+            if best_seqs is None:
+                best_seqs, best_scores = tgt, seq_score
             else:
-                # sample at temperature
-                tgt_flat = Categorical(logits=logits / temperature).sample()
+                # where this candidate is better, replace
+                better = seq_score > best_scores
+                best_scores[better] = seq_score[better]
+                best_seqs[better]   = tgt[better]
 
-        # 5) rerank by model log‑prob
-        #   compute log‐softmax once more
-        final_logits = self.forward(
-            src_flat, 
-            tgt_flat, 
-            length_ids=len_flat,
-            encoder_output=enc_out,
-            src_key_padding_mask=src_key_pad
-        )
-        logp = F.log_softmax(final_logits, dim=-1)                     # (B*n, T, V)
-
-        # gather log‐probs at the chosen tokens
-        # tgt_flat.unsqueeze(-1) → (B*n, T, 1)
-        tok_logp = logp.gather(-1, tgt_flat.unsqueeze(-1)).squeeze(-1)  # (B*n, T)
-        seq_logp = tok_logp.sum(dim=-1)                                # (B*n,)
-
-        # reshape back to (B, n) and pick best idx per example
-        seq_logp = seq_logp.view(batch_size, num_samples)              # (B, n)
-        best_idx = seq_logp.argmax(dim=1)                              # (B,)
-
-        # reshape tgt_flat likewise and index
-        tgt_reshaped = tgt_flat.view(batch_size, num_samples, tgt_len) # (B, n, T)
-        best = tgt_reshaped[torch.arange(batch_size), best_idx]        # (B, T)
-
-        logger.info(f"Generated {num_samples} samples per input and selected best after {num_steps} refinement steps.")
-        
-        return best
+        return best_seqs  # (B, T)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(),
