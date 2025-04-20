@@ -43,7 +43,7 @@ model:
     # precision: "bf16-mixed"
     precision: "32-true"
     strategy: "ddp"
-    gradient_clip_val: 1.0
+    gradient_clip_val: 50.0
     enable_checkpointing: true
     accumulate_grad_batches: ${eval:4096 // ${loader.global_batch_size}}
     callbacks:
