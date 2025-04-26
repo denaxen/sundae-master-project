@@ -47,7 +47,7 @@ model:
     strategy: "ddp"
     gradient_clip_val: 50.0
     enable_checkpointing: true
-    accumulate_grad_batches: ${eval:4096 // ${loader.global_batch_size}}
+    # accumulate_grad_batches: ${eval:4096 // ${loader.global_batch_size}}
     callbacks:
       - _target_: callbacks.TranslationSamplingCallback
         sample_frequency: 100
