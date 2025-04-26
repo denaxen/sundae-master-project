@@ -1,5 +1,5 @@
 data:
-  name: 'wmt14-ende'
+  name: 'wmt14-ende-toy'
   root: 'data/wmt14'
   source_sequence_length: 128
   target_sequence_length: 128
@@ -12,12 +12,12 @@ data:
   max_length: 128
 
   loader:
-    batch_size: 256
-    global_batch_size: 256
+    batch_size: 128
+    global_batch_size: 128
     num_workers: 4
 
 model:
-  type: "mt-hf-sundae"
+  type: "toy-mt-hf-sundae"
   embedding_dim: 512
   nb_layers: 6
   nb_heads: 8
@@ -38,7 +38,9 @@ model:
     _target_: lightning.pytorch.Trainer
     # max_epochs: 15
     log_every_n_steps: 1
-    val_check_interval: 0.1
+    check_val_every_n_epoch: null
+    val_check_interval: 100
+    num_sanity_val_steps: 0
     max_steps: 300000
     precision: "bf16-mixed"
     # precision: "32-true"
@@ -48,7 +50,7 @@ model:
     # accumulate_grad_batches: ${eval:4096 // ${loader.global_batch_size}}
     callbacks:
       - _target_: callbacks.TranslationSamplingCallback
-        sample_frequency: 5000
+        sample_frequency: 100
         nb_samples: ${sample.nb_samples} 
       - _target_: lightning.pytorch.callbacks.ModelCheckpoint
         dirpath: ${hydra:runtime.output_dir}/checkpoints

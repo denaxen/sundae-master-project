@@ -377,7 +377,11 @@ class SundaeModel(L.LightningModule):
             # For SacreBLEU, references should be a list where each item is a list of references
             # For single reference per source, we need [[ref1], [ref2], ...] format
             references_for_sacrebleu = [[ref] for ref in all_references]
-            sacrebleu_score = sacrebleu.corpus_bleu(all_generated, references_for_sacrebleu)
+            sacrebleu_score = sacrebleu.corpus_bleu(all_generated,
+                references_for_sacrebleu,
+                smooth_method='floor',
+                lowercase=True
+            )
             
             # For NLTK BLEU, tokenize and structure references correctly
             tokenized_generated = [gen.split() for gen in all_generated]
@@ -401,6 +405,7 @@ class SundaeModel(L.LightningModule):
                 logger.info(f"Example {i+1}:")
                 logger.info(f"  Reference: {all_references[i]}")
                 logger.info(f"  Generated: {all_generated[i]}")
+        logger.info("END" + "="*100)
         
         self.my_val_outputs.clear()
 
@@ -424,6 +429,10 @@ class SundaeModel(L.LightningModule):
         # 1) predict length once
         length_ids, _ = self._predict_length(src)
 
+        # Convert downsampled length to actual token length (multiply by 2)
+        # This is the inverse of the downsampling operation in training
+        predicted_token_lengths = (length_ids * 2).clamp(max=tgt_len)
+        
         # 2) encode once with length token
         enc_out, src_key_pad = self._encode(src, length_ids)
 
@@ -439,6 +448,11 @@ class SundaeModel(L.LightningModule):
             valid = torch.randint(0, V-1, (batch_size, tgt_len), device=device)
             tgt = valid + (valid >= self.pad_token).long()
 
+
+            positions = torch.arange(tgt_len, device=device).unsqueeze(0)  # (1, T)
+            length_mask = positions >= predicted_token_lengths.unsqueeze(1)  # (B, T)
+            tgt = tgt.masked_fill(length_mask, self.pad_token)
+
             # 4) iterative refine
             for _ in range(num_steps):
                 logits = self.forward(
@@ -446,10 +460,12 @@ class SundaeModel(L.LightningModule):
                     encoder_output=enc_out,
                     src_key_padding_mask=src_key_pad
                 )
+                
                 if temperature < 1e-2:
                     tgt = logits.argmax(dim=-1)
                 else:
                     tgt = Categorical(logits=logits / temperature).sample()
+                tgt = tgt.masked_fill(length_mask, self.pad_token)
 
             # 5) score this candidate
             final_logits = self.forward(
@@ -459,7 +475,9 @@ class SundaeModel(L.LightningModule):
             )
             logp = F.log_softmax(final_logits, dim=-1)         # (B, T, V)
             tok_logp = logp.gather(-1, tgt.unsqueeze(-1)).squeeze(-1)  # (B, T)
-            seq_score = tok_logp.sum(dim=-1)                   # (B,)
+
+            # ✅ Sum only up to predicted length
+            seq_score = (tok_logp * (~length_mask)).sum(dim=1)
 
             # 6) update bests
             if best_seqs is None:
@@ -469,6 +487,12 @@ class SundaeModel(L.LightningModule):
                 better = seq_score > best_scores
                 best_scores[better] = seq_score[better]
                 best_seqs[better]   = tgt[better]
+
+        # Make sure the final output respects the predicted length
+        for i in range(batch_size):
+            pred_len = predicted_token_lengths[i].item()
+            if pred_len < tgt_len:
+                best_seqs[i, pred_len:] = self.pad_token
 
         return best_seqs  # (B, T)
 

@@ -45,6 +45,7 @@ class TranslationSamplingCallback(L.Callback):
         """Generate translation samples every N steps."""
         # Check if we've reached a multiple of sample_frequency steps
         if trainer.global_step > 0 and trainer.global_step % self.sample_frequency == 0:
+            logger.info("START" + "="*100)
             logger.info(f"Sampling translations at step {trainer.global_step}")
             
             # Make sure we're in eval mode for sampling
@@ -92,7 +93,7 @@ class TranslationSamplingCallback(L.Callback):
                     logger.info(f"Target length (excluding pad tokens): {target_length}")
                     generated_length = (translation[0] != pad_token_id).sum().item()
                     logger.info(f"Generated length (excluding pad tokens): {generated_length}")
-                    logger.info("----")
+                    logger.info("-"*100)
             
             # Return to training mode if needed
             if was_training:

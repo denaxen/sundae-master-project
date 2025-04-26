@@ -1,6 +1,6 @@
 from torch.utils.data import DataLoader
 from data import get_text8
-from wmt14_example import get_wmt14_ende_data
+from wmt14_example import get_wmt14_ende_data, get_toy_wmt14_ende_data
 from transformers import AutoTokenizer
 import hashlib
 import os
@@ -118,6 +118,47 @@ def get_dataloaders(config):
             shuffle=False,
             pin_memory=True,
         )
+
+    elif config.data.name.lower() == "wmt14-ende-toy":
+        # 1) build toy EN–DE splits
+        data = get_toy_wmt14_ende_data(
+            splits=["train", "test"],
+            max_length=config.data.max_length,
+            reverse=config.data.get("reverse", False)
+        )
+
+        # 2) load the same shared tokenizer
+        shared_tokenizer = AutoTokenizer.from_pretrained(config.data.shared_tokenizer_path)
+
+        # 3) tokenize, set format
+        for split in ["train", "test"]:
+            data[split] = data[split].map(
+                lambda x: tokenize_wmt_example(
+                    x,
+                    shared_tokenizer,
+                    max_length=config.data.max_length
+                ),
+                remove_columns=["translation", "source_lang", "target_lang"],
+            )
+            data[split].set_format("torch", columns=["source", "target"])
+
+        # 4) wrap in DataLoaders
+        train_loader = DataLoader(
+            data["train"],
+            batch_size=config.data.loader.batch_size,
+            num_workers=config.data.loader.num_workers,
+            shuffle=True,
+            pin_memory=True,
+            # drop_last=True,
+        )
+        eval_loader = DataLoader(
+            data["test"],
+            batch_size=config.data.loader.batch_size,
+            num_workers=config.data.loader.num_workers,
+            shuffle=False,
+            pin_memory=True,
+        )
+        
 
     else:
         raise ValueError(f"Unknown dataset type: {config.data.name}")

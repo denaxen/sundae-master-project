@@ -2,7 +2,7 @@ from dataloaders import get_dataloaders
 import hydra
 from tqdm import tqdm
 from transformers import AutoTokenizer
-from wmt14_example import load_wmt14_ende
+from wmt14_example import load_wmt14_ende, get_toy_wmt14_ende_data
 
 @hydra.main(version_base=None, config_path="configs", config_name="ar_mt_hf_transformer")
 def main(config):
@@ -33,10 +33,27 @@ def main(config):
 
 if __name__ == "__main__":
     # main()
-    dataset = load_wmt14_ende(split="train", cache_dir="data/wmt14")
-    dataset = dataset.shuffle(seed=42)
-    for i in range(3):
-        print(dataset[i])
-        # print(f"Source: {dataset[i]['source']}")
-        # print(f"Target: {dataset[i]['target']}")
+    # dataset = load_wmt14_ende(split="train", cache_dir="data/wmt14")
+    data = get_toy_wmt14_ende_data(
+            splits=["train", "test"],
+            max_length=128,
+            reverse=False
+        )
+    train, test = data["train"], data["test"]
+    print(train)
+    print(test)
+    print('TRAIN:')
+    max_to_show = 10
+    for i, item in enumerate(train):
+        if i > max_to_show:
+            break
+        print(item)
+        print("-"*100)
+
+    print('TEST:')
+    max_to_show = 10
+    for i, item in enumerate(test):
+        if i > max_to_show:
+            break
+        print(item)
         print("-"*100)
