@@ -47,7 +47,7 @@ if __name__ == "__main__":
     for i, item in enumerate(train):
         if i > max_to_show:
             break
-        print(item)
+        print(f"{item['source']} -> {item['target']}")
         print("-"*100)
 
     print('TEST:')
@@ -55,5 +55,5 @@ if __name__ == "__main__":
     for i, item in enumerate(test):
         if i > max_to_show:
             break
-        print(item)
+        print(f"{item['source']} -> {item['target']}")
         print("-"*100)

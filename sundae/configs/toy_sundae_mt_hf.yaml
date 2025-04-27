@@ -28,29 +28,28 @@ model:
   dropout: 0.1
   feedforward_dim: 2048
 
-  min_lr: 1e-7
-  peak_lr: 1e-4
+  min_lr: 1e-5
+  peak_lr: 1e-2
   warmup_steps: 5000
 
 
 
   trainer:
     _target_: lightning.pytorch.Trainer
-    # max_epochs: 15
     log_every_n_steps: 1
     check_val_every_n_epoch: null
-    val_check_interval: 100
+    val_check_interval: 50
     num_sanity_val_steps: 0
-    max_steps: 300000
+    max_steps: 50000
     precision: "bf16-mixed"
     # precision: "32-true"
     strategy: "ddp"
-    gradient_clip_val: 50.0
+    # gradient_clip_val: 50.0
     enable_checkpointing: true
     # accumulate_grad_batches: ${eval:4096 // ${loader.global_batch_size}}
     callbacks:
       - _target_: callbacks.TranslationSamplingCallback
-        sample_frequency: 100
+        sample_frequency: 50
         nb_samples: ${sample.nb_samples} 
       - _target_: lightning.pytorch.callbacks.ModelCheckpoint
         dirpath: ${hydra:runtime.output_dir}/checkpoints
@@ -66,7 +65,7 @@ loader:
   num_workers: ${data.loader.num_workers}
 
 optimizer:
-  learning_rate: 1e-5
+  learning_rate: 1e-4
   betas: [0.9, 0.999]
   eps: 1e-6
   weight_decay: 0.1
@@ -81,7 +80,7 @@ save_model_path: "model.pt"
 unroll_steps: 2
 
 sample:
-  temperature: 0.6
+  temperature: 0
   sample_proportion: 0.3
   sample_frequency: 1
   steps: 16

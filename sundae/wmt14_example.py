@@ -108,42 +108,22 @@ def get_toy_wmt14_ende_data(
             ("Hi.",                               "Hi."),
             ("Hi!",                              "Hi!"),
             ("Hey there.",                       "Hey dort."),
-            # longer variants
-            ("Hello again, it’s been a while.",    "Hallo nochmal, es ist schon eine Weile her."),
-            ("Hello and welcome to our session.",  "Hallo und willkommen zu unserer Sitzung."),
         ],
         ("How are you?", "Wie geht's?"): [
             ("How are you?",                     "Wie geht's?"),
             ("How are you doing?",               "Wie läuft's?"),
-            ("How's it going?",                  "Wie geht es?"),
-            ("How have you been?",               "Wie bist du gewesen?"),
-            # longer variants
-            ("How are you today, my friend?",     "Wie geht's dir heute, mein Freund?"),
-            ("How are you feeling this morning?", "Wie fühlst du dich heute Morgen?"),
         ],
         ("Good morning.", "Guten Morgen."): [
             ("Good morning.",                     "Guten Morgen."),
-            ("Morning!",                          "Morgen!"),
             ("Good day.",                         "Guten Tag."),
-            # longer variants
-            ("Good morning, I hope you slept well.", "Guten Morgen, ich hoffe, du hast gut geschlafen."),
-            ("Good morning to everyone here today!",  "Guten Morgen an alle hier heute!"),
+            ("Hello! Good morning. How are you doing?", "Hallo! Guten Morgen. Wie läuft's?"),
         ],
         ("See you later!", "Bis später!"): [
             ("See you later!",                    "Bis später!"),
             ("See you soon!",                     "Bis bald!"),
-            ("Catch you later!",                  "Wir sehen uns später!"),
-            # longer variants
-            ("See you later at the usual place!",  "Wir sehen uns später am üblichen Ort!"),
-            ("See you later, take care until then!", "Bis später, pass bis dahin auf dich auf!"),
         ],
         ("Thank you very much.", "Vielen Dank."): [
             ("Thank you very much.",              "Vielen Dank."),
-            ("Thanks a lot.",                     "Danke vielmals."),
-            ("Thank you so much.",                "Danke sehr."),
-            # longer variants
-            ("Thank you very much for your help.",  "Vielen Dank für deine Hilfe."),
-            ("Thank you very much, I really appreciate it.", "Vielen Dank, ich weiß es sehr zu schätzen."),
         ],
     }
 

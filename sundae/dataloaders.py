@@ -149,7 +149,7 @@ def get_dataloaders(config):
             num_workers=config.data.loader.num_workers,
             shuffle=True,
             pin_memory=True,
-            # drop_last=True,
+            drop_last=True,
         )
         eval_loader = DataLoader(
             data["test"],
