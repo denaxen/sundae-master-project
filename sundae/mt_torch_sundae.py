@@ -120,6 +120,8 @@ class SundaeModel(L.LightningModule):
 
         # 1) sample a corruption rate per example
         alphas = torch.rand(B, device=device).unsqueeze(1)   # (B,1), each in [0,1)
+        # TODO: temporarily toy
+        # alphas = torch.zeros_like(alphas)
         # 2) for each token generate U(0,1) noise, compare to alpha
         noise = torch.rand(B, L, device=device)
         # mask = (noise < alpha) & (token != pad)
@@ -229,10 +231,11 @@ class SundaeModel(L.LightningModule):
         """
         Training with unrolled denoising:
           1. Corrupt the entire target sequence.
-          2. Compute loss from a forward pass with corrupted tokens (loss1).
-          3. Compute predictions from the first pass via argmax (detached).
-          4. Run a second forward pass using these predictions (loss2).
-          5. Average the losses.
+          2. For each unroll step:
+             a. Compute loss from forward pass with current tokens
+             b. Sample new predictions from the logits
+             c. Use these predictions for the next step
+          3. Average the losses across all steps.
         """
         src = batch['source']
         tgt = batch['target']
@@ -255,34 +258,43 @@ class SundaeModel(L.LightningModule):
         # Calculate length prediction metrics
         length_rmse, length_accuracy = self._compute_length_metrics(length_logits, down_len)
 
-        # First step: corrupt the target tokens.
-        corrupted_tgt = self.corrupt_tokens(tgt)
+        # First step: corrupt the target tokens
+        current_tgt = self.corrupt_tokens(tgt)
         
-        # Call encoder again with the length token
+        # Call encoder with the length token
         enc_out_with_len, src_key_pad_with_len = self._encode(src, down_len)
         
-        logits1 = self.forward(
-            src, 
-            corrupted_tgt, 
-            encoder_output=enc_out_with_len, 
-            src_key_padding_mask=src_key_pad_with_len
-        )
-        vocab_size = logits1.shape[-1]
-        loss1 = self.criterion(logits1.view(-1, vocab_size), tgt.view(-1))
+        # Initialize losses list to store losses from each step
+        step_losses = []
+        nonpad_mask = (tgt != self.pad_token)
+        # Perform multiple unroll steps
+        for step in range(self.config.unroll_steps):
+            # Forward pass with current tokens
+            logits = self.forward(
+                src, 
+                current_tgt, 
+                encoder_output=enc_out_with_len, 
+                src_key_padding_mask=src_key_pad_with_len
+            )
+            vocab_size = logits.shape[-1]
+            step_loss = self.criterion(logits.view(-1, vocab_size), tgt.view(-1))
+            step_losses.append(step_loss)
+            
+            # For the last step, we don't need to sample new tokens
+            if step < self.config.unroll_steps - 1:
+                # Sample new predictions for next step
+                # TODO: deterministic training
+                # sampled = Categorical(logits=logits).sample().detach()
+                with torch.no_grad():
+                    sampled = logits.argmax(dim=-1)
+                sampled[~nonpad_mask] = self.pad_token
+                current_tgt = sampled
         
-        # Detach argmax predictions from the first pass.
-        pred1 = Categorical(logits=logits1).sample().detach()
-        
-        logits2 = self.forward(
-            src, 
-            pred1, 
-            encoder_output=enc_out_with_len, 
-            src_key_padding_mask=src_key_pad_with_len
-        )
-        loss2 = self.criterion(logits2.view(-1, vocab_size), tgt.view(-1))
-        
-        total_token_loss = (loss1 + loss2) / 2.0
+        # Average losses across all steps
+        total_token_loss = sum(step_losses) / len(step_losses)
         total_loss = total_token_loss + self.length_loss_weight * length_loss
+        
+        # Log metrics
         self.log("train_token_loss", total_token_loss, prog_bar=True, on_step=True)
         self.log("train_length_loss", length_loss, prog_bar=False, on_step=True)
         self.log("train_loss", total_loss, prog_bar=True, on_step=True)
@@ -290,10 +302,6 @@ class SundaeModel(L.LightningModule):
         # Log length prediction metrics
         self.log("train_rmse_length_error", length_rmse, prog_bar=True, on_step=True)
         self.log("train_length_class_accuracy", length_accuracy, prog_bar=True, on_step=True)
-        
-        # Log individual losses
-        self.log("train_loss_step1", loss1, prog_bar=False, on_step=True)
-        self.log("train_loss_step2", loss2, prog_bar=False, on_step=True)
         
         # Log current learning rate
         if self.trainer is not None and hasattr(self.trainer, 'optimizers'):
@@ -351,6 +359,8 @@ class SundaeModel(L.LightningModule):
         vocab_size = logits.shape[-1]
         loss = self.criterion(logits.view(-1, vocab_size), tgt.view(-1))
         self.log("val_loss", loss, prog_bar=True, on_epoch=True, sync_dist=True)
+        val_perplexity = torch.exp(loss)
+        self.log('val_perplexity', val_perplexity, prog_bar=True, sync_dist=True)
         
         out = {"loss": loss, "length_rmse": length_rmse, "length_accuracy": length_accuracy}
         # Only sample from the first batch to keep validation fast
@@ -365,6 +375,7 @@ class SundaeModel(L.LightningModule):
     def on_validation_epoch_end(self):
         # All tokenization and BLEU calculation is handled here
         all_generated = []
+        all_gen_tokens = []
         all_references = []
         
         # Only process outputs that contain sample translations
@@ -375,7 +386,7 @@ class SundaeModel(L.LightningModule):
                     ref_text = self.tokenizer.decode(ref_tokens.tolist(), skip_special_tokens=True)
                     all_generated.append(gen_text)
                     all_references.append(ref_text)
-        
+                    all_gen_tokens.append(gen_tokens)
         if all_generated and all_references:
             # For SacreBLEU, references should be a list where each item is a list of references
             # For single reference per source, we need [[ref1], [ref2], ...] format
@@ -408,15 +419,24 @@ class SundaeModel(L.LightningModule):
                 logger.info(f"Example {i+1}:")
                 logger.info(f"  Reference: {all_references[i]}")
                 logger.info(f"  Generated: {all_generated[i]}")
+                logger.info(f"  Generated Tokens: {all_gen_tokens[i]}")
         logger.info("END" + "="*100)
         
         self.my_val_outputs.clear()
 
     def on_before_optimizer_step(self, optimizer):
-        # Track gradient norms
-        all_params = list(self.token_emb.parameters()) + list(self.model.parameters())
-        grad_norm = torch.norm(torch.stack([p.grad.norm(2) for p in all_params if p.grad is not None]), 2)
-        self.log("grad_norm", grad_norm, on_step=True, prog_bar=True)
+        # Compute gradient norms for encoder parameters
+        encoder_params = list(self.model.encoder.parameters())
+        encoder_grad_norms = [p.grad.norm(2) for p in encoder_params if p.grad is not None]
+        encoder_norm = torch.stack(encoder_grad_norms).norm(2) if encoder_grad_norms else torch.tensor(0.0)
+
+        # Compute gradient norms for decoder parameters
+        decoder_params = list(self.model.decoder.parameters())
+        decoder_grad_norms = [p.grad.norm(2) for p in decoder_params if p.grad is not None]
+        decoder_norm = torch.stack(decoder_grad_norms).norm(2) if decoder_grad_norms else torch.tensor(0.0)
+
+        self.log("encoder_grad_norm", encoder_norm, on_step=True, prog_bar=True)
+        self.log("decoder_grad_norm", decoder_norm, on_step=True, prog_bar=True)
 
     @torch.no_grad()
     def generate(self, src, num_steps=None, temperature=None, num_samples=None):
@@ -468,6 +488,7 @@ class SundaeModel(L.LightningModule):
                     tgt = logits.argmax(dim=-1)
                 else:
                     tgt = Categorical(logits=logits / temperature).sample()
+                # TODO: look how does it learn pads actually
                 tgt = tgt.masked_fill(length_mask, self.pad_token)
 
             # 5) score this candidate
@@ -492,10 +513,11 @@ class SundaeModel(L.LightningModule):
                 best_seqs[better]   = tgt[better]
 
         # Make sure the final output respects the predicted length
-        for i in range(batch_size):
-            pred_len = predicted_token_lengths[i].item()
-            if pred_len < tgt_len:
-                best_seqs[i, pred_len:] = self.pad_token
+        # TODO: look how does it learn pads actually
+        # for i in range(batch_size):
+        #     pred_len = predicted_token_lengths[i].item()
+        #     if pred_len < tgt_len:
+        #         best_seqs[i, pred_len:] = self.pad_token
 
         return best_seqs  # (B, T)
 
