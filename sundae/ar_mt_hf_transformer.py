@@ -178,7 +178,7 @@ class ARTransformerHF(L.LightningModule):
         
         # Generate translations for all batches to calculate BLEU properly
         # Use beam search with parameters from config for BLEU calculation
-        generated_tokens = self.sample_translation(
+        generated_tokens = self.generate(
             src, 
             num_beams=self.config.sample.num_beams, 
             do_sample=self.config.sample.do_sample,
@@ -362,7 +362,7 @@ class ARTransformerHF(L.LightningModule):
             
         return avg_state_dict
 
-    def sample_translation(self, src, num_beams=None, do_sample=None, length_penalty=None):
+    def generate(self, src, num_beams=None, do_sample=None, length_penalty=None):
         """
         Generate translations for a source batch using the model's generate method.
         

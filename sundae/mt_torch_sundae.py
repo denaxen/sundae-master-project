@@ -99,7 +99,10 @@ class SundaeModel(L.LightningModule):
         self.output_proj.weight = self.token_emb.weight
 
         # Loss: simple cross-entropy ignoring pad tokens.
-        self.criterion = nn.CrossEntropyLoss(ignore_index=self.pad_token, label_smoothing=self.config.model.label_smoothing)
+        if self.config.model.ignore_pad_token:
+            self.criterion = nn.CrossEntropyLoss(ignore_index=self.pad_token, label_smoothing=self.config.model.label_smoothing)
+        else:
+            self.criterion = nn.CrossEntropyLoss(label_smoothing=self.config.model.label_smoothing)
         
         logger.info(f"Total trainable parameters: {sum(p.numel() for p in self.parameters() if p.requires_grad):,}")
 

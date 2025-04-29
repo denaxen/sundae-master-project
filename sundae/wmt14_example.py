@@ -1,4 +1,5 @@
 import datasets
+import random
 from datasets import load_dataset
 import os
 from typing import Dict, List, Tuple
@@ -91,65 +92,71 @@ def get_wmt14_ende_data(splits: List[str] = ["train", "validation", "test"],
 def get_toy_wmt14_ende_data(
     splits: list = ["train", "test"],
     size: int = 1000,
-    test_size: float = 0.2,
     seed: int = 42,
     max_length: int = None,
     reverse: bool = False,
 ) -> dict:
     """
-    Build a toy EN–DE dataset of given size by re-phrasing 6 base sentences,
-    split into train/test, and run through preprocess_wmt14.
+    Build a toy EN–DE dataset for sanity‐checking overfitting:
+      - Explicit train/test pools (no HF train_test_split).
+      - Training: `size` samples WITH replacement from train_pool.
+      - Test: each example in test_pool exactly ONCE.
+      - Run both through preprocess_wmt14 to match real pipeline.
     """
-    # 1) define the 6 base pairs and a few paraphrases each
-    paraphrases = {
-        ("Hello.", "Hallo."): [
-            ("Hello.",                             "Hallo."),
-            ("Hello!",                            "Hallo!"),
-            ("Hi.",                               "Hi."),
-            ("Hi!",                              "Hi!"),
-            ("Hey there.",                       "Hey dort."),
-        ],
-        ("How are you?", "Wie geht's?"): [
-            ("How are you?",                     "Wie geht's?"),
-            ("How are you doing?",               "Wie läuft's?"),
-        ],
-        ("Good morning.", "Guten Morgen."): [
-            ("Good morning.",                     "Guten Morgen."),
-            ("Good day.",                         "Guten Tag."),
-            ("Hello! Good morning. How are you doing?", "Hallo! Guten Morgen. Wie läuft's?"),
-        ],
-        ("See you later!", "Bis später!"): [
-            ("See you later!",                    "Bis später!"),
-            ("See you soon!",                     "Bis bald!"),
-        ],
-        ("Thank you very much.", "Vielen Dank."): [
-            ("Thank you very much.",              "Vielen Dank."),
-        ],
-    }
-
-    # 2) flatten into a list, then sample with replacement up to `size`
-    all_pairs = []
-    for variants in paraphrases.values():
-        all_pairs.extend(variants)
-
-    import random
-    random.seed(seed)
-    toy_list = [random.choice(all_pairs) for _ in range(size)]
-    # wrap as “translation” dicts
-    toy_data = [
-        {"translation": {"en": en, "de": de}}
-        for en, de in toy_list
+    train_pairs = [
+        # Hello.
+        ("Hello.",                             "Hallo."),
+        ("Hello!",                            "Hallo!"),
+        ("Hi.",                               "Hi."),
+        ("Hi!",                              "Hi!"),
+        ("Hey there.",                       "Hey dort."),
+        # How are you?
+        ("How are you?",                     "Wie geht's?"),
+        ("How are you doing?",               "Wie läuft's?"),
+        ("How’s it going?",                  "Wie läuft es?"),
+        # Good morning.
+        ("Good morning.",                     "Guten Morgen."),
+        # ("Good day.",                         "Guten Tag."),
+        ("Morning!",                          "Morgen!"),
+        ("Hello! Good morning. How are you doing?",
+                                             "Hallo! Guten Morgen. Wie läuft's?"),
+        # See you later!
+        ("See you later!",                    "Bis später!"),
+        ("See you soon!",                     "Bis bald!"),
+        # ("Catch you later!",                  "Wir sehen uns später!"),
+        # Thank you
+        ("Thank you very much.",              "Vielen Dank."),
+        # ("Thanks a lot.",                     "Danke vielmals."),
+        # Longer “thank you” variant
+        ("Thank you very much for your help.",  "Vielen Dank für deine Hilfe."),
     ]
 
-    # 3) `Dataset` + shuffle + train_test_split
-    ds = Dataset.from_list(toy_data).shuffle(seed=seed)
-    split_ds = ds.train_test_split(test_size=test_size, seed=seed)
+    test_pairs = [
+        # ("Hi.",     "Hi."),
+        # ("Hello.", "Hallo."),
+        # ("How are you?", "Wie geht's?"),
+        ("Good morning.", "Guten Morgen."),
+        ("How are you doing?",   "Wie läuft's?"),
+        # ("See you later!", "Bis später!"),
+        # ("Thank you very much.", "Vielen Dank."),
+        ("Hello! Good morning. How are you doing?",
+                                             "Hallo! Guten Morgen. Wie läuft's?"),
+    ]
 
-    # 4) preprocess each split
+    train_pool = [pair for pair in train_pairs]
+
+    random.seed(seed)
+    train_sampled = [random.choice(train_pool) for _ in range(size)]
+
+    toy_data = {
+        "train": [{"translation": {"en": en, "de": de}} for en, de in train_sampled],
+        "test":  [{"translation": {"en": en, "de": de}} for en, de in test_pairs],
+    }
+
     data = {}
     for split in splits:
-        raw = split_ds[split]
-        data[split] = preprocess_wmt14(raw, max_length=max_length, reverse=reverse)
+        ds = Dataset.from_list(toy_data[split])
+        data[split] = preprocess_wmt14(ds, max_length=max_length, reverse=reverse)
 
     return data
 

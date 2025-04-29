@@ -27,6 +27,9 @@ def get_module(config):
     elif model_type == "toy-mt-hf-sundae":
         module_path = "mt_torch_sundae"
         class_name = "SundaeModel"
+    elif model_type == "toy-ar-mt-hf-transformer":
+        module_path = "ar_mt_hf_transformer"
+        class_name = "ARTransformerHF"
     else:
         raise ValueError(f"Unknown model type {model_type}. Supported types are 'diffusion', 'autoregressive', 'diffusion-mt', 'ar-mt-transformer', 'ar-mt-hf-transformer', and 'mt-hf-transformer'.")
     
