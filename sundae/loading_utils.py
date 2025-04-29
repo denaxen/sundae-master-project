@@ -5,10 +5,7 @@ def get_module(config):
     """Load and instantiate the LightningModule from config based on model type."""
     model_type = getattr(config.model, "type", "diffusion").lower()
 
-    if model_type == "ar-like-sundae-generation":
-        module_path = "models_ar"
-        class_name = "AutoregressiveTransformerModule"
-    elif model_type == "sundae-diffusion-generation":
+    if model_type == "sundae-diffusion-generation":
         module_path = "models"
         class_name = "SundaeTransformerModule"
     elif model_type == "sundae-diffusion-mt":
