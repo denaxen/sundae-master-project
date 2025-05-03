@@ -9,12 +9,43 @@ import sacrebleu
 import nltk
 from torch.distributions.categorical import Categorical
 
+class ResidualBlock(nn.Module):
+    def __init__(self, dim, hidden_dim):
+        super().__init__()
+        self.fc1   = nn.Linear(dim, hidden_dim)
+        self.fc2   = nn.Linear(hidden_dim, dim)
+        self.act   = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        # simple two‐layer bottleneck with skip
+        h = self.act(self.fc1(x))
+        h = self.fc2(h)
+        return self.act(x + h)
+
+class LengthPredictor(nn.Module):
+    def __init__(self, embed_dim, hidden_dim, num_blocks, num_classes):
+        super().__init__()
+        self.stem   = nn.Linear(embed_dim, embed_dim)
+        self.blocks = nn.ModuleList([
+            ResidualBlock(embed_dim, hidden_dim)
+            for _ in range(num_blocks)
+        ])
+        self.classifier = nn.Linear(embed_dim, num_classes)
+
+    def forward(self, x):
+        h = self.stem(x)
+        for block in self.blocks:
+            h = block(h)
+        return self.classifier(h)
+
 class SundaeModel(L.LightningModule):
     def __init__(self, config):
         super().__init__()
         self.save_hyperparameters()
         self.config = config
         self.pad_token = config.data.pad_token
+        # EOS token handling
+        self.eos_token = config.data.eos_token
         # Load the shared tokenizer using the provided path.
         self.tokenizer = AutoTokenizer.from_pretrained(config.data.shared_tokenizer_path)
         
@@ -23,13 +54,27 @@ class SundaeModel(L.LightningModule):
         
         V = config.data.vocabulary_size
         E = config.model.embedding_dim
-        N = max(config.data.source_sequence_length, config.data.target_sequence_length)
+        N = max(config.data.source_sequence_length, config.data.target_sequence_length) + 1 # because we add len 
 
         # token + position embeddings (shared)
         self.token_emb   = nn.Embedding(V, E)
         self.token_emb.weight.data[self.pad_token].zero_() # keep value but allow grads
         self.pos_emb     = nn.Embedding(N, E)
         self.dropout     = nn.Dropout(config.model.dropout)
+
+        # ——— length prediction head ———
+        H = config.model.target_length_prediction_hidden_dim
+        Dd = config.model.downsampled_target_length
+
+        # embedding for the (downsampled) length to prepend
+        self.length_pred = LengthPredictor(
+            embed_dim=E,
+            hidden_dim=H,
+            num_blocks=6,
+            num_classes=Dd
+        )
+        self.length_emb  = nn.Embedding(Dd, E)
+        self.length_loss_weight = config.model.length_loss_weight
 
         self.model = nn.Transformer(
             d_model=E,
@@ -73,25 +118,53 @@ class SundaeModel(L.LightningModule):
         corrupted[mask] = random_tokens[mask]
         return corrupted
 
-    def _encode(self, src_ids):
+    def _encode(self, src_ids, length_ids=None):
         B, S = src_ids.shape
         src_key_pad = (src_ids == self.pad_token)
-        src_pos = torch.arange(S, device=src_ids.device).unsqueeze(0).expand(B, -1)
-        src_emb = self.dropout(self.token_emb(src_ids) + self.pos_emb(src_pos))
+
+        if length_ids is not None:
+            len_e = self.length_emb(length_ids)
+            len_e = len_e.unsqueeze(1)
+            
+            src_tok_emb = self.token_emb(src_ids)
+
+            len_pos = torch.zeros((B, 1), dtype=torch.long, device=src_ids.device)
+            src_pos = torch.arange(1, S + 1, device=src_ids.device).unsqueeze(0).expand(B, -1)
+            pos = torch.cat([len_pos, src_pos], dim=1)
+            
+            src_emb = torch.cat([len_e, src_tok_emb], dim=1)
+            pos_emb = self.pos_emb(pos)
+            src_emb = self.dropout(src_emb + pos_emb)
+            
+            len_pad = torch.zeros((B, 1), dtype=torch.bool, device=src_key_pad.device)
+            src_key_pad = torch.cat([len_pad, src_key_pad], dim=1)
+        else:
+            src_pos = torch.arange(S, device=src_ids.device).unsqueeze(0).expand(B, -1)
+            src_emb = self.dropout(self.token_emb(src_ids) + self.pos_emb(src_pos))
+
         enc_out = self.model.encoder(
             src=src_emb,
             src_key_padding_mask=src_key_pad
         )
         return enc_out, src_key_pad
 
-    def forward(self, src_ids, tgt_ids, encoder_output=None, src_key_padding_mask=None):
+    def _compute_length_metrics(self, length_logits, true_downsampled_len):
+        pred_lengths = torch.argmax(length_logits, dim=1)
+        accuracy = (pred_lengths == true_downsampled_len).float().mean()
+        
+        mse = F.mse_loss(pred_lengths.float(), true_downsampled_len.float())
+        rmse = torch.sqrt(mse)
+        
+        return rmse, accuracy
+
+    def forward(self, src_ids, tgt_ids, length_ids=None, encoder_output=None, src_key_padding_mask=None):
         B, T = tgt_ids.shape
         
         tgt_pos = torch.arange(T, device=tgt_ids.device).unsqueeze(0).expand(B, -1)
         tgt_emb = self.dropout(self.token_emb(tgt_ids) + self.pos_emb(tgt_pos))
 
         if encoder_output is None or src_key_padding_mask is None:
-            memory, src_key_pad = self._encode(src_ids)
+            memory, src_key_pad = self._encode(src_ids, length_ids)
         else:
             memory, src_key_pad = encoder_output, src_key_padding_mask
 
@@ -110,9 +183,23 @@ class SundaeModel(L.LightningModule):
         src = batch['source']
         tgt = batch['target']
 
+        true_len = (tgt != self.pad_token).sum(dim=1)
+        down_len = ((true_len + 1) // 2).clamp(max=self.config.model.downsampled_target_length - 1)
+
         # Single encoder pass for token loss
         enc_out, src_key_pad = self._encode(src)
+
+        # Length prediction using the encoded output
+        with torch.no_grad():
+            mask = (~src_key_pad).unsqueeze(-1)
+            pooled = enc_out.masked_fill(~mask, 0.0).sum(1) / mask.sum(1).clamp(min=1)
+        length_logits = self.length_pred(pooled.detach())
+        length_loss  = F.cross_entropy(length_logits, down_len)
+        
+        length_rmse, length_accuracy = self._compute_length_metrics(length_logits, down_len)
+
         current_tgt = self.corrupt_tokens(tgt)
+        enc_out_with_len, src_key_pad_with_len = self._encode(src, down_len)
 
         step_losses = []
         nonpad_mask = (tgt != self.pad_token)
@@ -120,8 +207,8 @@ class SundaeModel(L.LightningModule):
             logits = self.forward(
                 src, 
                 current_tgt, 
-                encoder_output=enc_out,
-                src_key_padding_mask=src_key_pad
+                encoder_output=enc_out_with_len,
+                src_key_padding_mask=src_key_pad_with_len
             )
             vocab_size = logits.shape[-1]
             loss = self.criterion(logits.view(-1, vocab_size), tgt.view(-1))
@@ -134,21 +221,46 @@ class SundaeModel(L.LightningModule):
                 current_tgt = sampled
         
         total_token_loss = sum(step_losses) / len(step_losses)
+        total_loss = total_token_loss + self.length_loss_weight * length_loss
         
         self.log("train_token_loss", total_token_loss, prog_bar=True, on_step=True)
-        self.log("train_loss", total_token_loss, prog_bar=True, on_step=True)
+        self.log("train_length_loss", length_loss, prog_bar=False, on_step=True)
+        self.log("train_loss", total_loss, prog_bar=True, on_step=True)
+
+        self.log("train_rmse_length_error", length_rmse, prog_bar=True, on_step=True)
+        self.log("train_length_class_accuracy", length_accuracy, prog_bar=True, on_step=True)
         
         # Log current learning rate
         if self.trainer is not None and hasattr(self.trainer, 'optimizers'):
             current_lr = self.trainer.optimizers[0].param_groups[0]['lr']
             self.log('learning_rate', current_lr, prog_bar=True)
             
-        return total_token_loss
+        return total_loss
+
+    def _predict_length(self, src):
+        with torch.no_grad():
+            enc_out, src_key_pad = self._encode(src)
+            mask = (~src_key_pad).unsqueeze(-1)
+            enc_out = enc_out.masked_fill(~mask, 0.0)
+            pooled = enc_out.sum(dim=1) / mask.sum(dim=1).clamp(min=1)
+
+        length_logits = self.length_pred(pooled)
+        length_ids    = length_logits.argmax(dim=1)
+        return length_ids, length_logits
 
     def validation_step(self, batch, batch_idx):
         src = batch['source']
         tgt = batch['target']
-        enc_out, src_key_pad = self._encode(src)
+
+        true_len = (tgt != self.pad_token).sum(dim=1)
+        down_len = ((true_len + 1) // 2).clamp(max=self.config.model.downsampled_target_length - 1)
+        length_ids, length_logits = self._predict_length(src)
+        length_rmse, length_accuracy = self._compute_length_metrics(length_logits, down_len)
+
+        self.log("val_rmse_length_error", length_rmse, prog_bar=True, on_epoch=True, sync_dist=True)
+        self.log("val_length_class_accuracy", length_accuracy, prog_bar=True, on_epoch=True, sync_dist=True)
+
+        enc_out, src_key_pad = self._encode(src, length_ids)
         
         logits = self.forward(
             src,
@@ -242,17 +354,20 @@ class SundaeModel(L.LightningModule):
         # self.log('pad_w_norm', self.token_emb.weight[self.pad_token].norm(), on_step=True, prog_bar=True)
 
     @torch.no_grad()
-    def generate(self, src, num_steps=None, temperature=None, num_samples=None):
+    def generate(self, src):
         batch_size, src_len = src.size()
         tgt_len = self.config.data.target_sequence_length
         V = self.config.data.vocabulary_size
         device = src.device
 
-        num_steps   = num_steps   or self.config.sample.steps
-        temperature = temperature or self.config.sample.temperature
-        num_samples = num_samples or self.config.sample.num_samples
+        num_steps   = self.config.sample.steps
+        temperature = self.config.sample.temperature
+        num_samples = self.config.sample.num_samples
 
-        enc_out, src_key_pad = self._encode(src)
+        length_ids, _ = self._predict_length(src)
+        predicted_token_lengths = (length_ids * 2).clamp(max=tgt_len)
+
+        enc_out, src_key_pad = self._encode(src, length_ids)
 
         best_seqs = None
         best_scores = torch.full((batch_size,), float('-inf'), device=device)
@@ -260,7 +375,10 @@ class SundaeModel(L.LightningModule):
         for _ in range(num_samples):
             tgt = torch.randint(0, V-1, (batch_size, tgt_len), device=device)
             tgt = tgt + (tgt >= self.pad_token).long()
-            length_mask = (torch.arange(tgt_len, device=device).unsqueeze(0) >= tgt_len)
+
+            positions = torch.arange(tgt_len, device=device).unsqueeze(0)
+            length_mask = positions >= predicted_token_lengths.unsqueeze(1)
+            tgt = tgt.masked_fill(length_mask, self.pad_token)
             
             for _ in range(num_steps):
                 logits = self.forward(
@@ -291,14 +409,53 @@ class SundaeModel(L.LightningModule):
                 better = seq_score > best_scores
                 best_scores[better] = seq_score[better]
                 best_seqs[better]   = tgt[better]
+        
+        # trim eos tokens
+        trimmed_seqs = best_seqs.clone()
+        for b in range(batch_size):
+            eos_positions = (best_seqs[b] == self.eos_token).nonzero(as_tuple=True)[0]
+            if len(eos_positions) > 0:
+                first_eos = eos_positions[0]
+                if first_eos + 1 < tgt_len:
+                    trimmed_seqs[b, first_eos+1:] = self.pad_token
+        best_seqs = trimmed_seqs
 
         return best_seqs
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(),
-            lr=self.config.optimizer.learning_rate, 
+            lr=self.config.model.peak_lr, 
             betas=self.config.optimizer.betas,
             eps=self.config.optimizer.eps,
             weight_decay=self.config.optimizer.weight_decay)
         
-        return optimizer
+        scheduler = {
+            'scheduler': torch.optim.lr_scheduler.LambdaLR(
+                optimizer,
+                lambda step: self._get_lr_multiplier(step)
+            ),
+            'interval': 'step',
+            'frequency': 1
+        }
+        
+        return [optimizer], [scheduler]
+    
+    def _get_lr_multiplier(self, step):
+        """Custom learning rate schedule with warmup and cosine decay."""
+        warmup_steps = self.config.model.warmup_steps
+        max_steps = self.config.model.trainer.max_steps
+        min_lr = self.config.model.min_lr
+        peak_lr = self.config.model.peak_lr
+        final_lr = self.config.optimizer.learning_rate
+
+        min_multiplier = min_lr / peak_lr  # e.g., 1e-7/1e-4 = 0.001
+        peak_multiplier = 1.0
+        final_multiplier = final_lr / peak_lr  # e.g., 1e-5/1e-4 = 0.1
+        
+        if step < warmup_steps:
+            return min_multiplier + (peak_multiplier - min_multiplier) * (step / warmup_steps)
+        
+        progress = (step - warmup_steps) / (max_steps - warmup_steps)
+        progress = min(max(progress, 0.0), 1.0)
+        cosine_decay = 0.5 * (1 + math.cos(math.pi * progress))
+        return final_multiplier + (peak_multiplier - final_multiplier) * cosine_decay

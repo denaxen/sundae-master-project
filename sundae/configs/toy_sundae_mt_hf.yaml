@@ -1,15 +1,15 @@
 data:
   name: 'wmt14-ende-toy'
   root: 'data/wmt14'
-  source_sequence_length: 16
-  target_sequence_length: 16
+  source_sequence_length: 128
+  target_sequence_length: 128
   vocabulary_size: 40001
   shared_tokenizer_path: "tokenizers/wmt14-deen-shared-40k"
   pad_token: 1
   bos_token: 0
   eos_token: 2
   reverse: false
-  max_length: 16
+  max_length: 128
 
   loader:
     batch_size: 128
@@ -29,9 +29,9 @@ model:
   feedforward_dim: 2048
   ignore_pad_token: false
 
-  min_lr: 1e-5
-  peak_lr: 1e-3
-  warmup_steps: 5000
+  min_lr: 1e-7
+  peak_lr: 1e-4
+  warmup_steps: 500
 
 
 
@@ -70,7 +70,7 @@ loader:
   num_workers: ${data.loader.num_workers}
 
 optimizer:
-  learning_rate: 1e-3
+  learning_rate: 1e-5
   betas: [0.9, 0.999]
   eps: 1e-6
   weight_decay: 0.1
@@ -90,7 +90,7 @@ sample:
   sample_frequency: 1
   steps: 16
   nb_samples: 3
-  trim_eos: false
+  trim_eos: true
   num_samples: 16
 
 checkpointing:
