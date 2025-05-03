@@ -27,11 +27,11 @@ model:
   length_loss_weight: 1.0
   dropout: 0.1
   feedforward_dim: 2048
-  ignore_pad_token: false
+  ignore_pad_token: true
 
   min_lr: 1e-7
   peak_lr: 1e-4
-  warmup_steps: 500
+  warmup_steps: 1000
 
 
 
@@ -46,8 +46,8 @@ model:
     val_check_interval: 25
     num_sanity_val_steps: 2
     max_steps: 50000
-    # precision: "bf16-mixed"
-    precision: "32-true"
+    precision: "bf16-mixed"
+    # precision: "32-true"
     strategy: "ddp"
     # gradient_clip_val: 1.0
     enable_checkpointing: true

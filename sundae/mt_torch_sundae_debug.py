@@ -299,11 +299,11 @@ class SundaeModel(L.LightningModule):
         if all_generated and all_references:
             # For SacreBLEU, references should be a list where each item is a list of references
             # For single reference per source, we need [[ref1], [ref2], ...] format
-            references_for_sacrebleu = [[ref] for ref in all_references]
+            references_for_sacrebleu = [all_references]
             sacrebleu_score = sacrebleu.corpus_bleu(all_generated,
                 references_for_sacrebleu,
                 smooth_method='floor',
-                # lowercase=True
+                # lowercase=True,
             )
             
             # For NLTK BLEU, tokenize and structure references correctly
