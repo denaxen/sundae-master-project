@@ -105,38 +105,38 @@ def get_toy_wmt14_ende_data(
     """
     train_pairs = [
         # Hello.
-        ("Hello.",                             "Hallo."),
-        ("Hello!",                            "Hallo!"),
-        ("Hi.",                               "Hi."),
-        ("Hi!",                              "Hi!"),
-        ("Hey there.",                       "Hey dort."),
-        # How are you?
-        ("How are you?",                     "Wie geht's?"),
-        ("How are you doing?",               "Wie läuft's?"),
-        ("How’s it going?",                  "Wie läuft es?"),
-        # Good morning.
-        ("Good morning.",                     "Guten Morgen."),
-        # ("Good day.",                         "Guten Tag."),
-        ("Morning!",                          "Morgen!"),
+        # ("Hello.",                             "Hallo."),
+        # ("Hello!",                            "Hallo!"),
+        # ("Hi.",                               "Hi."),
+        # ("Hi!",                              "Hi!"),
+        # ("Hey there.",                       "Hey dort."),
+        # # How are you?
+        # ("How are you?",                     "Wie geht's?"),
+        # ("How are you doing?",               "Wie läuft's?"),
+        # ("How’s it going?",                  "Wie läuft es?"),
+        # # Good morning.
+        # ("Good morning.",                     "Guten Morgen."),
+        # # ("Good day.",                         "Guten Tag."),
+        # ("Morning!",                          "Morgen!"),
         ("Hello! Good morning. How are you doing?",
                                              "Hallo! Guten Morgen. Wie läuft's?"),
-        # See you later!
-        ("See you later!",                    "Bis später!"),
-        ("See you soon!",                     "Bis bald!"),
-        # ("Catch you later!",                  "Wir sehen uns später!"),
-        # Thank you
-        ("Thank you very much.",              "Vielen Dank."),
-        # ("Thanks a lot.",                     "Danke vielmals."),
-        # Longer “thank you” variant
-        ("Thank you very much for your help.",  "Vielen Dank für deine Hilfe."),
+        # # See you later!
+        # ("See you later!",                    "Bis später!"),
+        # ("See you soon!",                     "Bis bald!"),
+        # # ("Catch you later!",                  "Wir sehen uns später!"),
+        # # Thank you
+        # ("Thank you very much.",              "Vielen Dank."),
+        # # ("Thanks a lot.",                     "Danke vielmals."),
+        # # Longer “thank you” variant
+        # ("Thank you very much for your help.",  "Vielen Dank für deine Hilfe."),
     ]
 
     test_pairs = [
         # ("Hi.",     "Hi."),
         # ("Hello.", "Hallo."),
         # ("How are you?", "Wie geht's?"),
-        ("Good morning.", "Guten Morgen."),
-        ("How are you doing?",   "Wie läuft's?"),
+        # ("Good morning.", "Guten Morgen."),
+        # ("How are you doing?",   "Wie läuft's?"),
         # ("See you later!", "Bis später!"),
         # ("Thank you very much.", "Vielen Dank."),
         ("Hello! Good morning. How are you doing?",
