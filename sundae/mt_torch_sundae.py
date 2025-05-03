@@ -284,9 +284,9 @@ class SundaeModel(L.LightningModule):
             if step < self.config.unroll_steps - 1:
                 # Sample new predictions for next step
                 # TODO: deterministic training
-                # sampled = Categorical(logits=logits).sample().detach()
-                with torch.no_grad():
-                    sampled = logits.argmax(dim=-1)
+                sampled = Categorical(logits=logits).sample().detach()
+                # with torch.no_grad():
+                #     sampled = logits.argmax(dim=-1)
                 sampled[~nonpad_mask] = self.pad_token
                 current_tgt = sampled
         
