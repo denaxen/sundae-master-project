@@ -366,6 +366,8 @@ class SundaeModel(L.LightningModule):
         num_steps   = self.config.sample.steps
         temperature = self.config.sample.temperature
         num_samples = self.config.sample.num_samples
+        rho         = self.config.sample.rho
+        use_argmax_unrolled = (temperature < 1e-2) and (rho > 0)
 
         length_ids, _ = self._predict_length(src)
         predicted_token_lengths = (length_ids * 2).clamp(max=tgt_len)
@@ -383,18 +385,39 @@ class SundaeModel(L.LightningModule):
             length_mask = positions >= predicted_token_lengths.unsqueeze(1)
             tgt = tgt.masked_fill(length_mask, self.pad_token)
             
+            prev_logits = None
             for _ in range(num_steps):
                 logits = self.forward(
                     src, tgt,
                     encoder_output=enc_out,
                     src_key_padding_mask=src_key_pad
                 )
+                # ---------- argmax-unrolled & subset-update -------------
+                if use_argmax_unrolled and prev_logits is not None:
+                    # 4.a  token certainty from previous logits
+                    prev_logp = F.log_softmax(prev_logits, dim=-1)
+                    certainty, _ = prev_logp.max(dim=-1)
+
+                    # 4.b  select the lowest-certainty ρ% positions **per sentence**
+                    B = tgt.size(0)
+                    update_mask = torch.zeros_like(tgt, dtype=torch.bool)
+                    for b in range(B):
+                        # ignore PAD / length-mask positions
+                        valid = (~length_mask[b])
+                        k = max(1, int(rho * valid.sum().item()))
+                        # most negative certainty → most uncertain
+                        idx = torch.topk(-certainty[b][valid], k).indices
+                        update_mask[b, valid.nonzero(as_tuple=True)[0][idx]] = True
+                else:
+                    update_mask = ~length_mask          # fall back: update all non-PAD tokens
                 
                 if temperature < 1e-2:
-                    tgt = logits.argmax(dim=-1)
+                    new_tokens = logits.argmax(dim=-1)
                 else:
-                    tgt = Categorical(logits=logits / temperature).sample()
+                    new_tokens = Categorical(logits=logits / temperature).sample()
+                tgt = torch.where(update_mask, new_tokens, tgt)
                 tgt = tgt.masked_fill(length_mask, self.pad_token)
+                prev_logits = logits.detach()
 
             final_logits = self.forward(
                 src, tgt,

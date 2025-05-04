@@ -45,7 +45,7 @@ model:
     check_val_every_n_epoch: null
     val_check_interval: 500
     num_sanity_val_steps: 2
-    max_steps: 150000
+    max_steps: 50000
     precision: "bf16-mixed"
     # precision: "32-true"
     strategy: "ddp"
@@ -92,6 +92,8 @@ sample:
   nb_samples: 3
   trim_eos: true
   num_samples: 16
+  rho: 0.3  # ρ ∈ [0.1, 0.6] for argmax-unrolled
+  # update_subset_prob: 0.0  # set ≈0.3 for unconditional text (§3.2)
 
 checkpointing:
   resume_from_ckpt: false
