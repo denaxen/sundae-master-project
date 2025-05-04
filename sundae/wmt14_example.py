@@ -117,10 +117,10 @@ def get_toy_wmt14_ende_data(
         # ("Morning!",                          "Morgen!"),
         ("Hello! Good morning. How are you doing?",
                                              "Hallo! Guten Morgen. Wie läuft's?"),
-        ("See you later!",                    "Bis später!"),
+        # ("See you later!",                    "Bis später!"),
         # ("See you soon!",                     "Bis bald!"),
         # ("Catch you later!",                  "Wir sehen uns später!"),
-        ("Thank you very much.",              "Vielen Dank."),
+        # ("Thank you very much.",              "Vielen Dank."),
         # ("Thanks a lot.",                     "Danke vielmals."),
         # ("Thank you very much for your help.",  "Vielen Dank für deine Hilfe."),
     ]
@@ -131,8 +131,8 @@ def get_toy_wmt14_ende_data(
         # ("How are you?", "Wie geht's?"),
         # ("Good morning.", "Guten Morgen."),
         # ("How are you doing?",   "Wie läuft's?"),
-        ("See you later!", "Bis später!"),
-        ("Thank you very much.", "Vielen Dank."),
+        # ("See you later!", "Bis später!"),
+        # ("Thank you very much.", "Vielen Dank."),
         ("Hello! Good morning. How are you doing?",
                                              "Hallo! Guten Morgen. Wie läuft's?"),
     ]
