@@ -1,15 +1,15 @@
 data:
   name: 'wmt14-ende-toy'
   root: 'data/wmt14'
-  source_sequence_length: 128
-  target_sequence_length: 128
+  source_sequence_length: 32
+  target_sequence_length: 32
   vocabulary_size: 40001
   shared_tokenizer_path: "tokenizers/wmt14-deen-shared-40k"
   pad_token: 1
   bos_token: 0
   eos_token: 2
   reverse: false
-  max_length: 128
+  max_length: 32
 
   loader:
     batch_size: 128
@@ -43,9 +43,9 @@ model:
     benchmark: true
     log_every_n_steps: 1
     check_val_every_n_epoch: null
-    val_check_interval: 25
+    val_check_interval: 500
     num_sanity_val_steps: 2
-    max_steps: 50000
+    max_steps: 150000
     precision: "bf16-mixed"
     # precision: "32-true"
     strategy: "ddp"
