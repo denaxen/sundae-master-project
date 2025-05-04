@@ -57,8 +57,11 @@ class SundaeModel(L.LightningModule):
         N = max(config.data.source_sequence_length, config.data.target_sequence_length) + 1 # because we add len 
 
         # token + position embeddings (shared)
-        self.token_emb   = nn.Embedding(V, E)
-        self.token_emb.weight.data[self.pad_token].zero_() # keep value but allow grads
+        if self.config.model.ignore_pad_token:
+            self.token_emb   = nn.Embedding(V, E, padding_idx=self.pad_token)
+        else:
+            self.token_emb   = nn.Embedding(V, E)
+        # self.token_emb.weight.data[self.pad_token].zero_() # keep value but allow grads
         self.pos_emb     = nn.Embedding(N, E)
         self.dropout     = nn.Dropout(config.model.dropout)
 
@@ -351,7 +354,7 @@ class SundaeModel(L.LightningModule):
 
         self.log("encoder_grad_norm", encoder_norm, on_step=True, prog_bar=True)
         self.log("decoder_grad_norm", decoder_norm, on_step=True, prog_bar=True)
-        # self.log('pad_w_norm', self.token_emb.weight[self.pad_token].norm(), on_step=True, prog_bar=True)
+        self.log('pad_w_norm', self.token_emb.weight[self.pad_token].norm(), on_step=True, prog_bar=True)
 
     @torch.no_grad()
     def generate(self, src):
