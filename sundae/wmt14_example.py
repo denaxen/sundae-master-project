@@ -119,10 +119,10 @@ def get_toy_wmt14_ende_data(
                                              "Hallo! Guten Morgen. Wie läuft's?"),
         # ("See you later!",                    "Bis später!"),
         # ("See you soon!",                     "Bis bald!"),
-        # ("Catch you later!",                  "Wir sehen uns später!"),
-        ("Thank you very much.",              "Vielen Dank."),
+        ("Catch you later!",                  "Wir sehen uns später!"),
+        # ("Thank you very much.",              "Vielen Dank."),
         # ("Thanks a lot.",                     "Danke vielmals."),
-        # ("Thank you very much for your help.",  "Vielen Dank für deine Hilfe."),
+        ("Thank you very much for your help.",  "Vielen Dank für deine Hilfe."),
     ]
 
     test_pairs = [
@@ -132,9 +132,11 @@ def get_toy_wmt14_ende_data(
         # ("Good morning.", "Guten Morgen."),
         # ("How are you doing?",   "Wie läuft's?"),
         # ("See you later!", "Bis später!"),
-        ("Thank you very much.", "Vielen Dank."),
+        # ("Thank you very much.", "Vielen Dank."),
         ("Hello! Good morning. How are you doing?",
                                              "Hallo! Guten Morgen. Wie läuft's?"),
+        ("Catch you later!",                  "Wir sehen uns später!"),
+        ("Thank you very much for your help.",  "Vielen Dank für deine Hilfe."),
     ]
 
     train_pool = [pair for pair in train_pairs]
